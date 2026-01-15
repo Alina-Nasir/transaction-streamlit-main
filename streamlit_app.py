@@ -64,17 +64,19 @@ st.markdown("""
     }
     .upload-box {
         border: 2px dashed #00A651;
-        border-radius: 8px;
-        padding: 1rem;
+        border-radius: 10px;
+        padding: 40px;
         text-align: center;
         background-color: #F8FFF8;
-        margin: 1rem 0;
+        margin: 20px 0;
     }
     .file-preview {
-        max-width: 100px !important;  /* small thumbnail */
-        max-height: 100px !important; /* keep it square-ish */
+        max-width: 150px !important;  /* small thumbnail */
+        max-height: 150px !important; /* keep it square-ish */
         object-fit: contain !important; /* scale without cropping */
-        border-radius: 6px;
+        border-radius: 8px;
+        margin: 0 auto;
+        display: block;
     }
     .metric-card {
         background: white;
@@ -117,20 +119,30 @@ def get_pakistani_bank_prompt():
     return """
     You are an expert in Pakistani bank transaction slip analysis. Extract ALL visible information from this Pakistani bank transaction slip.
     
-    IMPORTANT: Focus on PAKISTANI BANKS like Meezan Bank, Habib Bank (HBL), United Bank (UBL), Bank Alfalah, MCB Bank, Allied Bank, Standard Chartered, HBL, etc.
+    IMPORTANT: Focus on PAKISTANI BANKS like Meezan Bank, Habib Metro, United Bank (UBL), Bank Alfalah, MCB Bank, Allied Bank, Standard Chartered, HBL, Faysal Bank, Soneri Bank, Dubai Islamic Bank, Bank Alfalah (Alfa), JS Bank, easypaisa, JazzCash etc.
+    
+    CRITICAL FOR ACCOUNT NUMBERS: 
+    1. Look for account numbers that are partially masked with **** or XXXX patterns. 
+    2. Common patterns: ****1234, XXX-XXX-1234, ******5678, XXXX-XXXX-XXXX-1234
+    3. Account numbers may appear as: "A/C No: ****5678" or "Account: XXX-XXX-7890" or "Account Number: 1234********"
+    4. IMPORTANT: Extract SEPARATE account numbers AND bank names for SENDER and RECEIVER
     
     Extract these SPECIFIC FIELDS:
-    1. bankName - Name of the bank (e.g., MEEZAN BANK, HABIB BANK LIMITED, UBL, BANK ALFALAH, HBL)
+    1. bankName - Name of the bank issuing this slip (e.g., MEEZAN BANK, HABIB BANK LIMITED, UBL, BANK ALFALAH, HBL)
     2. Date - Transaction date in DD/MM/YYYY format
     3. TransactionID - Transaction reference number, Chq #, Document Code, or any ID
     4. Amount - Transaction amount with currency (PKR) - look for "Actual Amount" or similar
-    5. ToAccount - Account number or name of recipient (look for Customer Name, Beneficiary)
-    6. FromAccount - Account number or name of sender (look for Sender, Payer)
-    7. Branch - Branch code or name
-    8. PaymentMode - Payment mode (Online, Cash, Cheque, Transfer)
-    9. CustomerID - Customer ID or Account number if visible
-    10. ChequeNo - Cheque number if present
-    11. Remarks - Any additional notes or remarks
+    5. ToAccount - Name of recipient (look for Customer Name, Beneficiary Name)
+    6. ToAccountNumber - Recipient's account number (look for "Beneficiary Account", "Credit To", "To A/C", "Receiver Account")
+    7. ToBankName - Recipient's bank name (look for "Beneficiary Bank", "Receiver Bank", "Credit Bank")
+    8. FromAccount - Name of sender (look for Sender Name, Payer Name)
+    9. FromAccountNumber - Sender's account number (look for "Sender Account", "Debit From", "From A/C", "Payer Account")
+    10. FromBankName - Sender's bank name (look for "Sender Bank", "Payer Bank", "Debit Bank")
+    11. Branch - Branch code or name
+    12. PaymentMode - Payment mode (Online, Cash, Cheque, Transfer)
+    13. CustomerID - Customer ID or Account number if visible
+    14. ChequeNo - Cheque number if present
+    15. Remarks - Any additional notes or remarks
     
     SPECIFIC INSTRUCTIONS FOR PAKISTANI SLIPS:
     - Look for fields like: "Branch", "Date", "Chq #", "Customer Name", "Amount", "Account No"
@@ -138,6 +150,15 @@ def get_pakistani_bank_prompt():
     - Amounts are usually in PKR (Pakistani Rupees)
     - Dates are usually in DD/MM/YYYY format
     - Common terms: "Branch", "Customer", "Amount", "Cheque", "Transfer", "Online"
+    
+    BANK NAME HINTS:
+    - Look for labels like: "Sender Bank", "Payer Bank", "From Bank", "Debit Bank"
+    - Look for labels like: "Receiver Bank", "Beneficiary Bank", "To Bank", "Credit Bank"
+    - Bank names might appear in sections like "Sender Details" or "Beneficiary Details"
+    
+    ACCOUNT NUMBER HINTS:
+    - Sender account usually near: "From", "Debit From", "Sender A/C", "Payer Account"
+    - Receiver account usually near: "To", "Credit To", "Beneficiary A/C", "Receiver Account"
     
     RETURN FORMAT:
     Return ONLY valid JSON with these exact field names:
@@ -147,7 +168,11 @@ def get_pakistani_bank_prompt():
         "TransactionID": "extracted value or 'Not Found'",
         "Amount": "extracted value or 'Not Found'",
         "ToAccount": "extracted value or 'Not Found'",
+        "ToAccountNumber": "extracted value or 'Not Found'",
+        "ToBankName": "extracted value or 'Not Found'",
         "FromAccount": "extracted value or 'Not Found'",
+        "FromAccountNumber": "extracted value or 'Not Found'",
+        "FromBankName": "extracted value or 'Not Found'",
         "Branch": "extracted value or 'Not Found'",
         "PaymentMode": "extracted value or 'Not Found'",
         "CustomerID": "extracted value or 'Not Found'",
@@ -156,6 +181,7 @@ def get_pakistani_bank_prompt():
     }
     
     Extract ONLY what is visible. If field not found, use "Not Found".
+    IMPORTANT: Extract account numbers exactly as shown, including **** or XXXX masking.
     """
 
 def call_openai_api_with_image(image_file, prompt=None, model="gpt-4o"):
@@ -255,11 +281,15 @@ def extract_json_from_response(response_text):
                 'Date': ['Date', 'date', 'Transaction Date', 'DATE'],
                 'TransactionID': ['TransactionID', 'transactionID', 'Transaction ID', 'Reference No', 'Chq #', 'Document Code'],
                 'Amount': ['Amount', 'amount', 'Transaction Amount', 'AMOUNT', 'Actual Amount'],
-                'ToAccount': ['ToAccount', 'toAccount', 'To Account', 'Beneficiary', 'Customer Name', 'Customer'],
-                'FromAccount': ['FromAccount', 'fromAccount', 'From Account', 'Sender', 'Payer'],
+                'ToAccount': ['ToAccount', 'toAccount', 'To Account', 'Beneficiary', 'Customer Name', 'Customer', 'Receiver Name'],
+                'ToAccountNumber': ['ToAccountNumber', 'toAccountNumber', 'To Account Number', 'Beneficiary Account', 'Credit To', 'To A/C', 'Receiver Account'],
+                'ToBankName': ['ToBankName', 'toBankName', 'To Bank Name', 'Beneficiary Bank', 'Receiver Bank', 'Credit Bank'],
+                'FromAccount': ['FromAccount', 'fromAccount', 'From Account', 'Sender', 'Payer', 'Sender Name'],
+                'FromAccountNumber': ['FromAccountNumber', 'fromAccountNumber', 'From Account Number', 'Sender Account', 'Debit From', 'From A/C', 'Payer Account'],
+                'FromBankName': ['FromBankName', 'fromBankName', 'From Bank Name', 'Sender Bank', 'Payer Bank', 'Debit Bank'],
                 'Branch': ['Branch', 'branch', 'BRANCH'],
                 'PaymentMode': ['PaymentMode', 'paymentMode', 'Payment Mode', 'Mode', 'PaymentMode'],
-                'CustomerID': ['CustomerID', 'customerID', 'Customer ID', 'Account No', 'Account Number'],
+                'CustomerID': ['CustomerID', 'customerID', 'Customer ID', 'Customer No'],
                 'ChequeNo': ['ChequeNo', 'chequeNo', 'Cheque No', 'Cheque Number', 'Actual Cheque No'],
                 'Remarks': ['Remarks', 'remarks', 'Note', 'Description']
             }
@@ -284,7 +314,11 @@ def extract_json_from_response(response_text):
                 "TransactionID": "Not Found",
                 "Amount": "Not Found",
                 "ToAccount": "Not Found",
+                "ToAccountNumber": "Not Found",
+                "ToBankName": "Not Found",
                 "FromAccount": "Not Found",
+                "FromAccountNumber": "Not Found",
+                "FromBankName": "Not Found",
                 "Branch": "Not Found",
                 "PaymentMode": "Not Found",
                 "CustomerID": "Not Found",
@@ -299,7 +333,11 @@ def extract_json_from_response(response_text):
             "TransactionID": "Not Found",
             "Amount": "Not Found",
             "ToAccount": "Not Found",
+            "ToAccountNumber": "Not Found",
+            "ToBankName": "Not Found",
             "FromAccount": "Not Found",
+            "FromAccountNumber": "Not Found",
+            "FromBankName": "Not Found",
             "Branch": "Not Found",
             "PaymentMode": "Not Found",
             "CustomerID": "Not Found",
@@ -321,6 +359,22 @@ def get_bank_style_class(bank_name):
         return 'bank-alfalah'
     elif 'HBL' in bank_name:
         return 'bank-hbl'
+    elif 'ALLIED' in bank_name or 'ABL' in bank_name:
+        return 'bank-allied'
+    elif 'STANDARD CHARTERED' in bank_name:
+        return 'bank-sc'
+    elif 'BANK ISLAMI' in bank_name:
+        return 'bank-islami'
+    elif 'FAYSAL' in bank_name:
+        return 'bank-faysal'
+    elif 'ASKARI' in bank_name:
+        return 'bank-askari'
+    elif 'JS BANK' in bank_name or 'JSB' in bank_name:
+        return 'bank-js'
+    elif 'DUBAI ISLAMIC' in bank_name:
+        return 'bank-dib'
+    elif 'SONERI' in bank_name:
+        return 'bank-soneri'
     else:
         return ''
 
@@ -351,14 +405,61 @@ def display_single_transaction(data):
         with col2:
             st.markdown(f"**Processed:** {datetime.now().strftime('%H:%M:%S')}")
         
-        # Main transaction details
-        st.markdown("---")
+        # Account Information Section
+        st.markdown("#### Account Information")
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            # Sender Information
+            st.markdown("**Sender Details**")
+            from_acc_name = data.get('FromAccount', 'Not Found')
+            from_acc_num = data.get('FromAccountNumber', 'Not Found')
+            from_bank_name = data.get('FromBankName', 'Not Found')
+            
+            if from_acc_num != 'Not Found':
+                # Show the masked account number
+                st.markdown(f"""
+                <div style='text-align: center; padding: 15px; background-color: #f8f9fa; border-radius: 8px; margin: 10px 0;'>
+                    <div style='font-size: 0.9rem; color: #666;'>Account Number</div>
+                    <div style='font-size: 1.3rem; font-weight: 600; color: #dc3545; font-family: monospace;'>{from_acc_num}</div>
+                </div>
+                """, unsafe_allow_html=True)
+            
+            if from_bank_name != 'Not Found':
+                st.metric("Sender Bank", from_bank_name)
+            
+            if from_acc_name != 'Not Found':
+                st.metric("Sender Name", from_acc_name)
+        
+        with col2:
+            # Receiver Information
+            st.markdown("**Receiver Details**")
+            to_acc_name = data.get('ToAccount', 'Not Found')
+            to_acc_num = data.get('ToAccountNumber', 'Not Found')
+            to_bank_name = data.get('ToBankName', 'Not Found')
+            
+            if to_acc_num != 'Not Found':
+                # Show the masked account number
+                st.markdown(f"""
+                <div style='text-align: center; padding: 15px; background-color: #f8f9fa; border-radius: 8px; margin: 10px 0;'>
+                    <div style='font-size: 0.9rem; color: #666;'>Account Number</div>
+                    <div style='font-size: 1.3rem; font-weight: 600; color: #28a745; font-family: monospace;'>{to_acc_num}</div>
+                </div>
+                """, unsafe_allow_html=True)
+            
+            if to_bank_name != 'Not Found':
+                st.metric("Receiver Bank", to_bank_name)
+            
+            if to_acc_name != 'Not Found':
+                st.metric("Receiver Name", to_acc_name)
+        
+        # Transaction Details Section
+        st.markdown("#### Transaction Details")
         col1, col2, col3 = st.columns(3)
         
         with col1:
             st.metric("Transaction Date", data.get('Date', 'Not Found'))
             st.metric("Branch", data.get('Branch', 'Not Found'))
-            st.metric("Payment Mode", data.get('PaymentMode', 'Not Found'))
         
         with col2:
             amount = data.get('Amount', 'Not Found')
@@ -372,12 +473,12 @@ def display_single_transaction(data):
                 """.format(amount), unsafe_allow_html=True)
             else:
                 st.metric("Amount", "Not Found")
-            st.metric("Transaction ID", data.get('TransactionID', 'Not Found'))
-            st.metric("Customer ID", data.get('CustomerID', 'Not Found'))
+            
+            st.metric("Payment Mode", data.get('PaymentMode', 'Not Found'))
         
         with col3:
-            st.metric("To Account", data.get('ToAccount', 'Not Found'))
-            st.metric("From Account", data.get('FromAccount', 'Not Found'))
+            st.metric("Transaction ID", data.get('TransactionID', 'Not Found'))
+            st.metric("Customer ID", data.get('CustomerID', 'Not Found'))
             if data.get('ChequeNo', 'Not Found') != 'Not Found':
                 st.metric("Cheque No", data.get('ChequeNo', 'Not Found'))
         
@@ -398,8 +499,10 @@ def create_dataframe(data_list):
     # Reorder columns
     column_order = [
         'bankName', 'Date', 'TransactionID', 'Amount', 
-        'ToAccount', 'FromAccount', 'Branch', 'PaymentMode',
-        'CustomerID', 'ChequeNo', 'Remarks', 'FileName', 'ProcessedDate'
+        'FromAccount', 'FromAccountNumber', 'FromBankName',
+        'ToAccount', 'ToAccountNumber', 'ToBankName',
+        'Branch', 'PaymentMode', 'CustomerID', 'ChequeNo', 'Remarks', 
+        'FileName', 'ProcessedDate'
     ]
     
     existing_cols = [col for col in column_order if col in df.columns]
@@ -441,7 +544,7 @@ def main():
     
     # Header with Pakistan theme
     st.markdown('<div class="pakistan-flag">', unsafe_allow_html=True)
-    st.markdown('<h1 class="main-header">Bank Transaction Parser</h1>', unsafe_allow_html=True)
+    st.markdown('<h1 class="main-header"> Bank Transaction Parser</h1>', unsafe_allow_html=True)
     st.markdown("</div>", unsafe_allow_html=True)
     
     st.markdown("""
