@@ -1,13 +1,21 @@
+import os
+
+# Set Hugging Face cache directory to D drive
+os.environ['HF_HOME'] = 'D:/huggingface_cache'
+
+# Suppress torch.classes warnings in Streamlit watcher
+os.environ['STREAMLIT_WATCHER_SUPPRESS_TORCH_WARNINGS'] = '1'
+
 import streamlit as st
 import base64
 import io
 import tempfile
-import os
 import json
 import re
 import pandas as pd
 from PIL import Image
-from openai import OpenAI
+import torch
+from transformers import Qwen3VLForConditionalGeneration, AutoProcessor
 import hashlib
 from datetime import datetime
 
@@ -184,25 +192,35 @@ def get_pakistani_bank_prompt():
     IMPORTANT: Extract account numbers exactly as shown, including **** or XXXX masking.
     """
 
-def call_openai_api_with_image(image_file, prompt=None, model="gpt-4o"):
-    """Call OpenAI GPT-4o API with uploaded image/PDF"""
+@st.cache_resource
+def load_model():
+    """Load Qwen3-VL-2B-Instruct model and processor"""
+    model_name = "Qwen/Qwen3-VL-2B-Instruct"
+    
     try:
-        # Get API key
-        OPENAI_API_KEY = st.secrets.get("API_KEY", "")
-        if not OPENAI_API_KEY:
-            OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
-            if not OPENAI_API_KEY and 'api_key' in st.session_state:
-                OPENAI_API_KEY = st.session_state.api_key
-        
-        if not OPENAI_API_KEY:
-            st.error("OpenAI API key not found. Please add it in the sidebar.")
+        model = Qwen3VLForConditionalGeneration.from_pretrained(
+            model_name,
+            dtype=torch.float16,  # Use float16 to save memory
+            device_map="cpu",
+            low_cpu_mem_usage=True  # Enable memory-efficient loading
+        )
+        processor = AutoProcessor.from_pretrained(model_name)
+        return model, processor
+    except Exception as e:
+        st.error(f"Error loading model {model_name}: {str(e)}")
+        return None, None
+
+def call_local_model_with_image(image_file, prompt=None):
+    """Call local Qwen3-VL model with uploaded image/PDF"""
+    try:
+        model, processor = load_model()
+        if model is None or processor is None:
             return None
         
-        client = OpenAI(api_key=OPENAI_API_KEY)
-
         # Use Pakistani bank specific prompt
         effective_prompt = prompt if prompt else get_pakistani_bank_prompt()
-
+        
+        # Handle Image/PDF processing
         # Check if file is PDF
         if hasattr(image_file, 'type') and image_file.type == "application/pdf":
             if not PDF_SUPPORT:
@@ -217,47 +235,56 @@ def call_openai_api_with_image(image_file, prompt=None, model="gpt-4o"):
         else:
             image = Image.open(image_file)
         
-        # Convert and optimize image
         if image.mode != 'RGB':
             image = image.convert('RGB')
-        
-        # Resize large images to save tokens
-        max_size = 1024
-        if max(image.size) > max_size:
-            ratio = max_size / max(image.size)
-            new_size = tuple(int(dim * ratio) for dim in image.size)
-            image = image.resize(new_size, Image.Resampling.LANCZOS)
             
-        buffered = io.BytesIO()
-        image.save(buffered, format="JPEG", quality=85)
-        image_base64 = base64.b64encode(buffered.getvalue()).decode("utf-8")
-
+        # Save image specifically for the local model to read
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".jpg") as tmp_img:
+            image.save(tmp_img, format="JPEG", quality=95)
+            tmp_img_path = tmp_img.name
+            
         messages = [
             {
                 "role": "user",
                 "content": [
-                    {"type": "text", "text": effective_prompt},
                     {
-                        "type": "image_url",
-                        "image_url": {
-                            "url": f"data:image/jpeg;base64,{image_base64}"
-                        },
+                        "type": "image",
+                        "image": tmp_img_path,
                     },
+                    {"type": "text", "text": effective_prompt},
                 ],
             }
         ]
-
-        response = client.chat.completions.create(
-            model=model,
-            messages=messages,
-            temperature=0.1,
-            max_tokens=1000
+        
+        # Preparation for inference
+        inputs = processor.apply_chat_template(
+            messages,
+            tokenize=True,
+            add_generation_prompt=True,
+            return_dict=True,
+            return_tensors="pt"
         )
+        inputs = inputs.to(model.device)
 
-        return response.choices[0].message.content
+        # Generation
+        generated_ids = model.generate(**inputs, max_new_tokens=1024)
+        generated_ids_trimmed = [
+            out_ids[len(in_ids) :] for in_ids, out_ids in zip(inputs.input_ids, generated_ids)
+        ]
+        output_text = processor.batch_decode(
+            generated_ids_trimmed, skip_special_tokens=True, clean_up_tokenization_spaces=False
+        )[0]
+        
+        # Cleanup temp file
+        try:
+            os.unlink(tmp_img_path)
+        except:
+            pass
+            
+        return output_text
 
     except Exception as e:
-        st.error(f"API Error: {str(e)}")
+        st.error(f"Model Inference Error: {str(e)}")
         return None
 
 def extract_json_from_response(response_text):
@@ -597,7 +624,7 @@ def main():
         
         if st.button("Process This Slip", type="primary", use_container_width=True):
             with st.spinner("Extracting transaction details..."):
-                response = call_openai_api_with_image(uploaded_file)
+                response = call_local_model_with_image(uploaded_file)
                 
                 if response:
                     extracted_data = extract_json_from_response(response)
