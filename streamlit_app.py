@@ -1,11 +1,4 @@
 import os
-
-# Set Hugging Face cache directory to D drive
-os.environ['HF_HOME'] = 'D:/huggingface_cache'
-
-# Suppress torch.classes warnings in Streamlit watcher
-os.environ['STREAMLIT_WATCHER_SUPPRESS_TORCH_WARNINGS'] = '1'
-
 import streamlit as st
 import base64
 import io
@@ -14,10 +7,9 @@ import json
 import re
 import pandas as pd
 from PIL import Image
-import torch
-from transformers import Qwen3VLForConditionalGeneration, AutoProcessor
 import hashlib
 from datetime import datetime
+from ollama import chat
 
 # Try to import PDF libraries
 try:
@@ -193,29 +185,17 @@ def get_pakistani_bank_prompt():
     """
 
 @st.cache_resource
-def load_model():
-    """Load Qwen3-VL-2B-Instruct model and processor"""
-    model_name = "Qwen/Qwen3-VL-2B-Instruct"
-    
-    try:
-        model = Qwen3VLForConditionalGeneration.from_pretrained(
-            model_name,
-            dtype=torch.float16,  # Use float16 to save memory
-            device_map="cpu",
-            low_cpu_mem_usage=True  # Enable memory-efficient loading
-        )
-        processor = AutoProcessor.from_pretrained(model_name)
-        return model, processor
-    except Exception as e:
-        st.error(f"Error loading model {model_name}: {str(e)}")
-        return None, None
+def get_ollama_config():
+    """Get Ollama configuration"""
+    return {
+        'model': 'qwen3-vl:2b-instruct-q4_K_M',
+        'base_url': 'http://localhost:11434'
+    }
 
 def call_local_model_with_image(image_file, prompt=None):
-    """Call local Qwen3-VL model with uploaded image/PDF"""
+    """Call Ollama Qwen3-VL model with uploaded image/PDF"""
     try:
-        model, processor = load_model()
-        if model is None or processor is None:
-            return None
+        config = get_ollama_config()
         
         # Use Pakistani bank specific prompt
         effective_prompt = prompt if prompt else get_pakistani_bank_prompt()
@@ -237,54 +217,38 @@ def call_local_model_with_image(image_file, prompt=None):
         
         if image.mode != 'RGB':
             image = image.convert('RGB')
-            
-        # Save image specifically for the local model to read
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".jpg") as tmp_img:
-            image.save(tmp_img, format="JPEG", quality=95)
-            tmp_img_path = tmp_img.name
-            
-        messages = [
-            {
-                "role": "user",
-                "content": [
-                    {
-                        "type": "image",
-                        "image": tmp_img_path,
-                    },
-                    {"type": "text", "text": effective_prompt},
-                ],
-            }
-        ]
         
-        # Preparation for inference
-        inputs = processor.apply_chat_template(
-            messages,
-            tokenize=True,
-            add_generation_prompt=True,
-            return_dict=True,
-            return_tensors="pt"
+        # Resize image to optimal resolution for faster inference
+        # Bank slips typically don't need very high resolution
+        max_dimension = 1280
+        if max(image.size) > max_dimension:
+            ratio = max_dimension / max(image.size)
+            new_size = tuple(int(dim * ratio) for dim in image.size)
+            image = image.resize(new_size, Image.Resampling.LANCZOS)
+        
+        # Convert image to base64
+        buffered = io.BytesIO()
+        image.save(buffered, format="JPEG", quality=95)
+        img_base64 = base64.b64encode(buffered.getvalue()).decode('utf-8')
+        
+        # Call Ollama API
+        response = chat(
+            model=config['model'],
+            messages=[
+                {
+                    'role': 'user',
+                    'content': effective_prompt,
+                    'images': [img_base64]
+                }
+            ]
         )
-        inputs = inputs.to(model.device)
-
-        # Generation
-        generated_ids = model.generate(**inputs, max_new_tokens=1024)
-        generated_ids_trimmed = [
-            out_ids[len(in_ids) :] for in_ids, out_ids in zip(inputs.input_ids, generated_ids)
-        ]
-        output_text = processor.batch_decode(
-            generated_ids_trimmed, skip_special_tokens=True, clean_up_tokenization_spaces=False
-        )[0]
         
-        # Cleanup temp file
-        try:
-            os.unlink(tmp_img_path)
-        except:
-            pass
-            
+        output_text = response['message']['content']
         return output_text
 
     except Exception as e:
-        st.error(f"Model Inference Error: {str(e)}")
+        st.error(f"Ollama Inference Error: {str(e)}")
+        st.error("Make sure Ollama is running on http://localhost:11434")
         return None
 
 def extract_json_from_response(response_text):
