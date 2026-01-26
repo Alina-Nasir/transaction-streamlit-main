@@ -1,83 +1,100 @@
 import os
 import base64
 import time
+import requests
 from PIL import Image
-from ollama import chat
+import io
+import json
 
-def test_qwen_inference():
-    print("Testing Qwen3-VL via Ollama (http://localhost:11434)...")
-    model_name = "qwen3-vl:2b-instruct-q4_K_M"
-
+def test_qwen_inference():    
+    # Use OpenAI-compatible chat endpoint (better for vision)
+    server_url = "http://localhost:8080/v1/chat/completions"
+    
+    
+    # Health check
     try:
-        # Find a sample image
-        image_dir = "picture_data"
-        if os.path.exists(image_dir):
-            files = [f for f in os.listdir(image_dir) if f.lower().endswith(('.jpg', '.jpeg', '.png'))]
-            if files:
-                sample_image_path = os.path.join(image_dir, files[0])
-                print(f"Using sample image: {sample_image_path}")
-                
-                # Load and convert image to base64
-                print("Loading image...")
-                image = Image.open(sample_image_path)
-                if image.mode != 'RGB':
-                    image = image.convert('RGB')
-                
-                # Convert to base64
-                import io
-                buffered = io.BytesIO()
-                image.save(buffered, format="JPEG")
-                img_base64 = base64.b64encode(buffered.getvalue()).decode('utf-8')
-                
-                # Create a prompt similar to the app
-                prompt = "Extract all text from this image."
-                
-                # Start timing
-                print(f"\nCalling Ollama model {model_name}...")
-                print("⏱️  Starting inference timer...")
-                start_time = time.time()
-                
-                # Call Ollama API
-                response = chat(
-                    model=model_name,
-                    messages=[
-                        {
-                            'role': 'user',
-                            'content': prompt,
-                            'images': [img_base64]
-                        }
-                    ]
-                )
-                
-                # End timing
-                end_time = time.time()
-                inference_duration = end_time - start_time
-                
-                output_text = response['message']['content']
-                
-                print("\n" + "="*60)
-                print("⏱️  INFERENCE TIME MEASUREMENT")
-                print("="*60)
-                print(f"Duration: {inference_duration:.2f} seconds ({inference_duration:.3f}s)")
-                print(f"Duration: {inference_duration * 1000:.0f} milliseconds")
-                print("="*60)
-                
-                print("\n📄 Generated Output:")
+        response = requests.get("http://localhost:8080/health", timeout=5)
+        print(f"✅ Server running!")
+    except:
+        print("❌ Server not running! Run start_llama_server.bat first")
+        return
+    
+    # Find image
+    image_dir = "picture_data"
+    if not os.path.exists(image_dir):
+        print(f"❌ Create '{image_dir}' folder with JPG/PNG images")
+        return
+    
+    files = [f for f in os.listdir(image_dir) if f.lower().endswith(('.jpg', '.jpeg', '.png'))]
+    if not files:
+        print("❌ No images in 'picture_data'")
+        return
+    
+    sample_image_path = os.path.join(image_dir, files[7])
+    print(f"📷 Image: {sample_image_path}")
+    
+    # Load and encode image
+    image = Image.open(sample_image_path).convert('RGB')
+    buffered = io.BytesIO()
+    image.save(buffered, format="JPEG", quality=90)
+    img_base64 = base64.b64encode(buffered.getvalue()).decode('utf-8')
+    
+    # OpenAI-compatible chat format
+    payload = {
+        "model": "qwen3-vl-2b-instruct-Q3_K_M",
+        "messages": [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "Extract all text from this image in detail."},
+                    {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{img_base64}"}}
+                ]
+            }
+        ],
+        "temperature": 0.1,
+        "max_tokens": 512,
+        "top_p": 0.7,
+        "top_k": 40
+    }
+    
+    print(f"⏱️  Starting inference...")
+    print(f"⚠️  Note: First inference may take 2-3 minutes (image encoding on CPU)")
+    start_time = time.time()
+    
+    try:
+        response = requests.post(
+            server_url,
+            json=payload,
+            headers={"Content-Type": "application/json"},
+            timeout=300  # 5 minutes for CPU image processing
+        )
+        inference_time = time.time() - start_time
+        
+        print(f"\n{'='*60}")
+        print(f"⏱️  Duration: {inference_time:.2f}s")
+        print(f"Status: {response.status_code}")
+        print('='*60)
+        
+        if response.status_code == 200:
+            result = response.json()
+            if 'choices' in result and len(result['choices']) > 0:
+                output_text = result['choices'][0]['message']['content']
+                print("\n📄 OUTPUT:")
                 print("-" * 60)
                 print(output_text)
                 print("-" * 60)
-                print("\n✅ Test PASSED.")
+                print("✅ SUCCESS!")
             else:
-                print("No images found in 'picture_data'. Skipping inference.")
+                print("❌ No response content")
+                print(json.dumps(result, indent=2))
         else:
-            print(f"Directory '{image_dir}' not found. Skipping inference.")
-
+            print("❌ ERROR:")
+            print(response.text)
+            
+    except requests.exceptions.Timeout:
+        print("❌ TIMEOUT - Server overloaded or model loading")
     except Exception as e:
-        print(f"\nTest FAILED with error: {e}")
-        print("Make sure:")
-        print("1. Ollama is running (ollama serve)")
-        print("2. Model is pulled (ollama pull qwen3-vl:2b-instruct-q4_K_M)")
-        print("3. Ollama is accessible at http://localhost:11434")
+        print(f"❌ FAILED: {e}")
 
 if __name__ == "__main__":
     test_qwen_inference()
