@@ -30,7 +30,7 @@ def test_qwen_inference():
         print("❌ No images in 'picture_data'")
         return
     
-    sample_image_path = os.path.join(image_dir, files[7])
+    sample_image_path = os.path.join(image_dir, files[21])
     print(f"📷 Image: {sample_image_path}")
     
     # Load and encode image

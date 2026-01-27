@@ -9,7 +9,8 @@ import pandas as pd
 from PIL import Image
 import hashlib
 from datetime import datetime
-from ollama import chat
+import requests
+import uuid
 
 # Try to import PDF libraries
 try:
@@ -115,87 +116,90 @@ def convert_pdf_to_images(pdf_file):
         return None
 
 def get_pakistani_bank_prompt():
-    """Return prompt optimized for Pakistani bank transaction slips"""
-    return """
-    You are an expert in Pakistani bank transaction slip analysis. Extract ALL visible information from this Pakistani bank transaction slip.
-    
-    IMPORTANT: Focus on PAKISTANI BANKS like Meezan Bank, Habib Metro, United Bank (UBL), Bank Alfalah, MCB Bank, Allied Bank, Standard Chartered, HBL, Faysal Bank, Soneri Bank, Dubai Islamic Bank, Bank Alfalah (Alfa), JS Bank, easypaisa, JazzCash etc.
-    
-    CRITICAL FOR ACCOUNT NUMBERS: 
-    1. Look for account numbers that are partially masked with **** or XXXX patterns. 
-    2. Common patterns: ****1234, XXX-XXX-1234, ******5678, XXXX-XXXX-XXXX-1234
-    3. Account numbers may appear as: "A/C No: ****5678" or "Account: XXX-XXX-7890" or "Account Number: 1234********"
-    4. IMPORTANT: Extract SEPARATE account numbers AND bank names for SENDER and RECEIVER
-    
-    Extract these SPECIFIC FIELDS:
-    1. bankName - Name of the bank issuing this slip (e.g., MEEZAN BANK, HABIB BANK LIMITED, UBL, BANK ALFALAH, HBL)
-    2. Date - Transaction date in DD/MM/YYYY format
-    3. TransactionID - Transaction reference number, Chq #, Document Code, or any ID
-    4. Amount - Transaction amount with currency (PKR) - look for "Actual Amount" or similar
-    5. ToAccount - Name of recipient (look for Customer Name, Beneficiary Name)
-    6. ToAccountNumber - Recipient's account number (look for "Beneficiary Account", "Credit To", "To A/C", "Receiver Account")
-    7. ToBankName - Recipient's bank name (look for "Beneficiary Bank", "Receiver Bank", "Credit Bank")
-    8. FromAccount - Name of sender (look for Sender Name, Payer Name)
-    9. FromAccountNumber - Sender's account number (look for "Sender Account", "Debit From", "From A/C", "Payer Account")
-    10. FromBankName - Sender's bank name (look for "Sender Bank", "Payer Bank", "Debit Bank")
-    11. Branch - Branch code or name
-    12. PaymentMode - Payment mode (Online, Cash, Cheque, Transfer)
-    13. CustomerID - Customer ID or Account number if visible
-    14. ChequeNo - Cheque number if present
-    15. Remarks - Any additional notes or remarks
-    
-    SPECIFIC INSTRUCTIONS FOR PAKISTANI SLIPS:
-    - Look for fields like: "Branch", "Date", "Chq #", "Customer Name", "Amount", "Account No"
-    - For Meezan Bank: Look for green color themes, "MEEZAN BANK" text
-    - Amounts are usually in PKR (Pakistani Rupees)
-    - Dates are usually in DD/MM/YYYY format
-    - Common terms: "Branch", "Customer", "Amount", "Cheque", "Transfer", "Online"
-    
-    BANK NAME HINTS:
-    - Look for labels like: "Sender Bank", "Payer Bank", "From Bank", "Debit Bank"
-    - Look for labels like: "Receiver Bank", "Beneficiary Bank", "To Bank", "Credit Bank"
-    - Bank names might appear in sections like "Sender Details" or "Beneficiary Details"
-    
-    ACCOUNT NUMBER HINTS:
-    - Sender account usually near: "From", "Debit From", "Sender A/C", "Payer Account"
-    - Receiver account usually near: "To", "Credit To", "Beneficiary A/C", "Receiver Account"
-    
-    RETURN FORMAT:
-    Return ONLY valid JSON with these exact field names:
-    {
-        "bankName": "extracted value or 'Not Found'",
-        "Date": "extracted value or 'Not Found'",
-        "TransactionID": "extracted value or 'Not Found'",
-        "Amount": "extracted value or 'Not Found'",
-        "ToAccount": "extracted value or 'Not Found'",
-        "ToAccountNumber": "extracted value or 'Not Found'",
-        "ToBankName": "extracted value or 'Not Found'",
-        "FromAccount": "extracted value or 'Not Found'",
-        "FromAccountNumber": "extracted value or 'Not Found'",
-        "FromBankName": "extracted value or 'Not Found'",
-        "Branch": "extracted value or 'Not Found'",
-        "PaymentMode": "extracted value or 'Not Found'",
-        "CustomerID": "extracted value or 'Not Found'",
-        "ChequeNo": "extracted value or 'Not Found'",
-        "Remarks": "extracted value or 'Not Found'"
-    }
-    
-    Extract ONLY what is visible. If field not found, use "Not Found".
-    IMPORTANT: Extract account numbers exactly as shown, including **** or XXXX masking.
-    """
+    """Return optimized prompt for Pakistani bank transaction slips"""
+    return """Extract data from this Pakistani bank transaction slip. Return ONLY valid JSON.
 
-@st.cache_resource
-def get_ollama_config():
-    """Get Ollama configuration"""
-    return {
-        'model': 'qwen3-vl:2b-instruct-q4_K_M',
-        'base_url': 'http://localhost:11434'
-    }
+Fields to extract:
+- bankName: Bank name (e.g., MEEZAN BANK, HBL, UBL, ALFALAH)
+- Date: DD/MM/YYYY format
+- TransactionID: Reference number, Chq #, Document Code
+- Amount: With PKR currency
+- FromAccount: Sender name
+- FromAccountNumber: Sender account (preserve ****, XXXX masking)
+- FromBankName: Sender's bank
+- ToAccount: Receiver name
+- ToAccountNumber: Receiver account (preserve ****, XXXX masking)
+- ToBankName: Receiver's bank
+- Branch: Branch code/name
+- PaymentMode: Online/Cash/Cheque/Transfer
+- CustomerID: If visible
+- ChequeNo: If present
+- Remarks: Additional notes
+
+Return format (use "Not Found" if missing):
+{
+    "bankName": "",
+    "Date": "",
+    "TransactionID": "",
+    "Amount": "",
+    "FromAccount": "",
+    "FromAccountNumber": "",
+    "FromBankName": "",
+    "ToAccount": "",
+    "ToAccountNumber": "",
+    "ToBankName": "",
+    "Branch": "",
+    "PaymentMode": "",
+    "CustomerID": "",
+    "ChequeNo": "",
+    "Remarks": ""
+}"""
+
+def resize_image_to_512p(image):
+    """
+    Resize image to 512p (512 max dimension) while maintaining aspect ratio
+    
+    Args:
+        image: PIL Image object
+    
+    Returns:
+        Resized PIL Image object
+    """
+    max_dimension = 512
+    
+    # Calculate new dimensions maintaining aspect ratio
+    if max(image.size) <= max_dimension:
+        return image
+    
+    if image.size[0] > image.size[1]:
+        scale_ratio = max_dimension / image.size[0]
+    else:
+        scale_ratio = max_dimension / image.size[1]
+    
+    new_width = int(image.size[0] * scale_ratio)
+    new_height = int(image.size[1] * scale_ratio)
+    
+    # Resize with high-quality resampling
+    resized = image.resize((new_width, new_height), Image.Resampling.LANCZOS)
+    return resized
+
+def encode_image_to_base64(image):
+    """Encode PIL Image to base64 JPEG"""
+    buffered = io.BytesIO()
+    image.save(buffered, format="JPEG", quality=90)
+    return base64.b64encode(buffered.getvalue()).decode('utf-8')
 
 def call_local_model_with_image(image_file, prompt=None):
-    """Call Ollama Qwen3-VL model with uploaded image/PDF"""
+    """Call llama.cpp Qwen3-VL model via HTTP with uploaded image/PDF"""
     try:
-        config = get_ollama_config()
+        server_url = "http://localhost:8080/v1/chat/completions"
+        
+        # Health check
+        try:
+            requests.get("http://localhost:8080/health", timeout=5)
+        except:
+            st.error("❌ llama.cpp server not running! Run start_llama_server.bat first")
+            return None
         
         # Use Pakistani bank specific prompt
         effective_prompt = prompt if prompt else get_pakistani_bank_prompt()
@@ -218,37 +222,61 @@ def call_local_model_with_image(image_file, prompt=None):
         if image.mode != 'RGB':
             image = image.convert('RGB')
         
-        # Resize image to optimal resolution for faster inference
-        # Bank slips typically don't need very high resolution
-        max_dimension = 1280
-        if max(image.size) > max_dimension:
-            ratio = max_dimension / max(image.size)
-            new_size = tuple(int(dim * ratio) for dim in image.size)
-            image = image.resize(new_size, Image.Resampling.LANCZOS)
+        # Resize to 512p for faster inference (same methodology as fastest_inference.py)
+        image = resize_image_to_512p(image)
         
-        # Convert image to base64
-        buffered = io.BytesIO()
-        image.save(buffered, format="JPEG", quality=95)
-        img_base64 = base64.b64encode(buffered.getvalue()).decode('utf-8')
+        # Encode image to base64
+        img_base64 = encode_image_to_base64(image)
         
-        # Call Ollama API
-        response = chat(
-            model=config['model'],
-            messages=[
+        # Add unique ID to prevent caching
+        unique_id = str(uuid.uuid4())[:8]
+        
+        # Prepare llama.cpp API request
+        payload = {
+            "model": "qwen3-vl-2b-instruct-Q3_K_M",
+            "messages": [
                 {
-                    'role': 'user',
-                    'content': effective_prompt,
-                    'images': [img_base64]
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": f"{effective_prompt} [ID: {unique_id}]"},
+                        {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{img_base64}"}}
+                    ]
                 }
-            ]
+            ],
+            "temperature": 0.1,
+            "max_tokens": 512,
+            "top_p": 0.7,
+            "top_k": 40,
+            "cache_prompt": False
+        }
+        
+        # Call llama.cpp HTTP server
+        response = requests.post(
+            server_url,
+            json=payload,
+            headers={"Content-Type": "application/json"},
+            timeout=300  # 5 minutes for CPU image processing
         )
         
-        output_text = response['message']['content']
-        return output_text
+        if response.status_code == 200:
+            result = response.json()
+            if 'choices' in result and len(result['choices']) > 0:
+                output_text = result['choices'][0]['message']['content']
+                return output_text
+            else:
+                st.error("No response from model")
+                return None
+        else:
+            st.error(f"llama.cpp Error: {response.status_code}")
+            st.error(response.text[:200])
+            return None
 
+    except requests.exceptions.Timeout:
+        st.error("❌ TIMEOUT - Server overloaded or image processing taking too long")
+        return None
     except Exception as e:
-        st.error(f"Ollama Inference Error: {str(e)}")
-        st.error("Make sure Ollama is running on http://localhost:11434")
+        st.error(f"llama.cpp Inference Error: {str(e)}")
+        st.error("Make sure llama.cpp server is running on http://localhost:8080")
         return None
 
 def extract_json_from_response(response_text):

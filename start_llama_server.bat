@@ -43,16 +43,21 @@ echo Starting server on http://localhost:8080 (CPU optimized)
 echo ========================================
 echo.
 
-REM FIXED COMMAND: Minimal working setup for Qwen3-VL
+REM OPTIMIZED COMMAND: Maximum CPU performance for Qwen3-VL
 "%LLAMA_CPP_PATH%" ^
   -m "%MODEL_PATH%" ^
   --mmproj "%MMPROJ_PATH%" ^
   --host 0.0.0.0 ^
   --port 8080 ^
-  -c 4096 ^
+  -c 8192 ^
   -t %NUMBER_OF_PROCESSORS% ^
+  -tb %NUMBER_OF_PROCESSORS% ^
+  -b 2048 ^
+  -ub 512 ^
   -n 512 ^
-  --n-gpu-layers 0
+  --n-gpu-layers 0 ^
+  -np 1 ^
+  --mlock
 
 echo.
 echo Server ready! Test at: http://localhost:8080
