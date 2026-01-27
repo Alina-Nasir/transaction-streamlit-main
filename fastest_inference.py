@@ -73,7 +73,7 @@ def main():
         print("❌ No images in 'picture_data'")
         return
     
-    sample_image_path = os.path.join(image_dir, files[0])
+    sample_image_path = os.path.join(image_dir,"7fa0ce04-9110-4d2f-8e19-0afa36bdb366.jpeg")
     print(f"\n📷 Image: {sample_image_path}")
     
     # Load original image to get original dimensions

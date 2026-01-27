@@ -119,17 +119,25 @@ def get_pakistani_bank_prompt():
     """Return optimized prompt for Pakistani bank transaction slips"""
     return """Extract data from this Pakistani bank transaction slip. Return ONLY valid JSON.
 
+CRITICAL: For Date field, look for: "Date", "Trx Date", "Trans Date", "Posted", "Value Date", "Processing Date". Convert to DD/MM/YYYY (e.g., 25/01/2026). Check header and footer areas.
+
+CRITICAL: SEPARATE Sender and Receiver accounts carefully:
+- FromAccountNumber: Look ONLY in "From", "Debit From", "Sender A/C", "Payer Account" sections
+- ToAccountNumber: Look ONLY in "To", "Credit To", "Beneficiary A/C", "Receiver Account" sections
+- If account appears only once in slip, use "Not Found" for the other
+- DO NOT copy sender account to receiver field or vice versa
+
 Fields to extract:
 - bankName: Bank name (e.g., MEEZAN BANK, HBL, UBL, ALFALAH)
-- Date: DD/MM/YYYY format
+- Date: DD/MM/YYYY format - MUST extract from date field
 - TransactionID: Reference number, Chq #, Document Code
 - Amount: With PKR currency
-- FromAccount: Sender name
-- FromAccountNumber: Sender account (preserve ****, XXXX masking)
-- FromBankName: Sender's bank
-- ToAccount: Receiver name
-- ToAccountNumber: Receiver account (preserve ****, XXXX masking)
-- ToBankName: Receiver's bank
+- FromAccount: Sender name (look for "From", "Payer", "Sender" labels)
+- FromAccountNumber: Sender account only (preserve ****, XXXX masking)
+- FromBankName: Sender's bank only
+- ToAccount: Receiver name (look for "To", "Beneficiary", "Receiver" labels)
+- ToAccountNumber: Receiver account only (preserve ****, XXXX masking)
+- ToBankName: Receiver's bank only
 - Branch: Branch code/name
 - PaymentMode: Online/Cash/Cheque/Transfer
 - CustomerID: If visible
@@ -619,6 +627,7 @@ def main():
                 response = call_local_model_with_image(uploaded_file)
                 
                 if response:
+                    print(response)
                     extracted_data = extract_json_from_response(response)
                     extracted_data['FileName'] = uploaded_file.name
                     extracted_data['ProcessedDate'] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
