@@ -20,7 +20,7 @@ def resize_image_to_512p(image_path):
     image = Image.open(image_path).convert('RGB')
     original_width, original_height = image.size
     
-    max_dimension = 512
+    max_dimension = 1024
     
     # Calculate new dimensions maintaining aspect ratio
     if original_width > original_height:
@@ -73,7 +73,7 @@ def main():
         print("❌ No images in 'picture_data'")
         return
     
-    sample_image_path = os.path.join(image_dir,"7fa0ce04-9110-4d2f-8e19-0afa36bdb366.jpeg")
+    sample_image_path = os.path.join(image_dir,"0c491e04-4440-4891-8332-0788c70c8a99.jpeg")
     print(f"\n📷 Image: {sample_image_path}")
     
     # Load original image to get original dimensions
@@ -99,14 +99,39 @@ def main():
     
     # Prepare request
     unique_id = str(uuid.uuid4())[:8]
-    
+    prompt="""
+       ### Task: OCR Pakistani bank slip to JSON.
+Rules:
+1. Date: Find Date/Trx/Posted/Value. Convert to DD/MM/YYYY.
+2. Separation: "From" (Sender/Debit/Payer) is DISTINCT from "To" (Receiver/Credit/Beneficiary). Never mix them.
+3. Accuracy: Extract VISIBLE text only. Use "Not Found" for missing fields. Do not guess bank names.
+
+### JSON Output:
+{
+"bankName": "Top header/Logo text",
+"Date": "DD/MM/YYYY",
+"TransactionID": "Ref/Doc/Chq No",
+"Amount": "Value with PKR",
+"FromAccount": "Sender Name",
+"FromAccountNumber": "Sender Account No",
+"FromBankName": "Sender Bank",
+"ToAccount": "Receiver Name",
+"ToAccountNumber": "Receiver Account No",
+"ToBankName": "Receiver Bank",
+"Branch": "Branch Name/Code",
+"PaymentMode": "Online/Cash/Cheque",
+"CustomerID": "ID if visible",
+"ChequeNo": "Cheque No",
+"Remarks": "Notes"
+}
+    """
     payload = {
         "model": "qwen3-vl-2b-instruct-Q3_K_M",
         "messages": [
             {
                 "role": "user",
                 "content": [
-                    {"type": "text", "text": f"Extract all text from this image in detail. [ID: {unique_id}]"},
+                    {"type": "text", "text": prompt},
                     {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{img_base64}"}}
                 ]
             }

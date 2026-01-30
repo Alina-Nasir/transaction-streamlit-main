@@ -11,6 +11,7 @@ import hashlib
 from datetime import datetime
 import requests
 import uuid
+import sqlite3
 
 # Try to import PDF libraries
 try:
@@ -115,53 +116,117 @@ def convert_pdf_to_images(pdf_file):
         st.error(f"Error converting PDF: {str(e)}")
         return None
 
+def init_sqlite_db():
+    """Initialize SQLite database and create table if it doesn't exist"""
+    try:
+        conn = sqlite3.connect('transactions.db')
+        cursor = conn.cursor()
+        
+        # Create table if it doesn't exist
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS transactions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                bankName TEXT,
+                Date TEXT,
+                TransactionID TEXT,
+                Amount TEXT,
+                FromAccount TEXT,
+                FromAccountNumber TEXT,
+                FromBankName TEXT,
+                ToAccount TEXT,
+                ToAccountNumber TEXT,
+                ToBankName TEXT,
+                Branch TEXT,
+                PaymentMode TEXT,
+                CustomerID TEXT,
+                ChequeNo TEXT,
+                Remarks TEXT,
+                FileName TEXT,
+                ProcessedDate TEXT,
+                CreatedAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        
+        conn.commit()
+        conn.close()
+        return True
+    except Exception as e:
+        print(f"Error initializing SQLite database: {str(e)}")
+        return False
+
+def insert_transaction_to_db(data):
+    """Insert extracted transaction data into SQLite database"""
+    try:
+        conn = sqlite3.connect('transactions.db')
+        cursor = conn.cursor()
+        
+        # Insert transaction data
+        cursor.execute('''
+            INSERT INTO transactions (
+                bankName, Date, TransactionID, Amount, FromAccount, FromAccountNumber,
+                FromBankName, ToAccount, ToAccountNumber, ToBankName, Branch, PaymentMode,
+                CustomerID, ChequeNo, Remarks, FileName, ProcessedDate
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ''', (
+            data.get('bankName', 'Not Found'),
+            data.get('Date', 'Not Found'),
+            data.get('TransactionID', 'Not Found'),
+            data.get('Amount', 'Not Found'),
+            data.get('FromAccount', 'Not Found'),
+            data.get('FromAccountNumber', 'Not Found'),
+            data.get('FromBankName', 'Not Found'),
+            data.get('ToAccount', 'Not Found'),
+            data.get('ToAccountNumber', 'Not Found'),
+            data.get('ToBankName', 'Not Found'),
+            data.get('Branch', 'Not Found'),
+            data.get('PaymentMode', 'Not Found'),
+            data.get('CustomerID', 'Not Found'),
+            data.get('ChequeNo', 'Not Found'),
+            data.get('Remarks', 'Not Found'),
+            data.get('FileName', 'Not Found'),
+            data.get('ProcessedDate', datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+        ))
+        
+        conn.commit()
+        conn.close()
+        print(f"Transaction stored in database successfully")
+        return True
+    except Exception as e:
+        print(f"Error inserting transaction to database: {str(e)}")
+        return False
+
 def get_pakistani_bank_prompt():
     """Return optimized prompt for Pakistani bank transaction slips"""
-    return """Extract data from this Pakistani bank transaction slip. Return ONLY valid JSON.
+    return """
+      
 
-CRITICAL: For Date field, look for: "Date", "Trx Date", "Trans Date", "Posted", "Value Date", "Processing Date". Convert to DD/MM/YYYY (e.g., 25/01/2026). Check header and footer areas.
+       ### Task: OCR Pakistani bank slip to JSON.
+Rules:
+1. Date: Find Date/Trx/Posted/Value. Convert to DD/MM/YYYY.
+2. Separation: "From" (Sender/Debit/Payer) is DISTINCT from "To" (Receiver/Credit/Beneficiary). Never mix them.
+3. Accuracy: Extract VISIBLE text only. Use "Not Found" for missing fields. Do not guess bank names.
 
-CRITICAL: SEPARATE Sender and Receiver accounts carefully:
-- FromAccountNumber: Look ONLY in "From", "Debit From", "Sender A/C", "Payer Account" sections
-- ToAccountNumber: Look ONLY in "To", "Credit To", "Beneficiary A/C", "Receiver Account" sections
-- If account appears only once in slip, use "Not Found" for the other
-- DO NOT copy sender account to receiver field or vice versa
-
-Fields to extract:
-- bankName: Bank name (e.g., MEEZAN BANK, HBL, UBL, ALFALAH)
-- Date: DD/MM/YYYY format - MUST extract from date field
-- TransactionID: Reference number, Chq #, Document Code
-- Amount: With PKR currency
-- FromAccount: Sender name (look for "From", "Payer", "Sender" labels)
-- FromAccountNumber: Sender account only (preserve ****, XXXX masking)
-- FromBankName: Sender's bank only
-- ToAccount: Receiver name (look for "To", "Beneficiary", "Receiver" labels)
-- ToAccountNumber: Receiver account only (preserve ****, XXXX masking)
-- ToBankName: Receiver's bank only
-- Branch: Branch code/name
-- PaymentMode: Online/Cash/Cheque/Transfer
-- CustomerID: If visible
-- ChequeNo: If present
-- Remarks: Additional notes
-
-Return format (use "Not Found" if missing):
+### JSON Output:
 {
-    "bankName": "",
-    "Date": "",
-    "TransactionID": "",
-    "Amount": "",
-    "FromAccount": "",
-    "FromAccountNumber": "",
-    "FromBankName": "",
-    "ToAccount": "",
-    "ToAccountNumber": "",
-    "ToBankName": "",
-    "Branch": "",
-    "PaymentMode": "",
-    "CustomerID": "",
-    "ChequeNo": "",
-    "Remarks": ""
-}"""
+"bankName": "Top header/Logo text",
+"Date": "DD/MM/YYYY",
+"TransactionID": "Ref/Doc/Chq No",
+"Amount": "Value with PKR",
+"FromAccount": "Sender Name",
+"FromAccountNumber": "Sender Account No",
+"FromBankName": "Sender Bank",
+"ToAccount": "Receiver Name",
+"ToAccountNumber": "Receiver Account No",
+"ToBankName": "Receiver Bank",
+"Branch": "Branch Name/Code",
+"PaymentMode": "Online/Cash/Cheque",
+"CustomerID": "ID if visible",
+"ChequeNo": "Cheque No",
+"Remarks": "Notes"
+}
+
+
+"""
 
 def resize_image_to_512p(image):
     """
@@ -173,7 +238,7 @@ def resize_image_to_512p(image):
     Returns:
         Resized PIL Image object
     """
-    max_dimension = 512
+    max_dimension = 1024
     
     # Calculate new dimensions maintaining aspect ratio
     if max(image.size) <= max_dimension:
@@ -559,6 +624,9 @@ def export_to_excel(dataframe):
 
 # ---------- MAIN APP ----------
 def main():
+    # Initialize SQLite database
+    init_sqlite_db()
+    
     # Initialize session state
     if 'extracted_data' not in st.session_state:
         st.session_state.extracted_data = []
@@ -631,12 +699,23 @@ def main():
                     extracted_data = extract_json_from_response(response)
                     extracted_data['FileName'] = uploaded_file.name
                     extracted_data['ProcessedDate'] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                    
+                    # Update session state and display first
                     st.session_state.current_result = extracted_data
                     st.session_state.extracted_data.append(extracted_data)
                     st.session_state.dataframe = create_dataframe(st.session_state.extracted_data)
                     
-                    st.success(f"Transaction saved! Total: {len(st.session_state.extracted_data)}")
-                    st.rerun()
+                    st.success(f"✅ Transaction extracted! Total: {len(st.session_state.extracted_data)}")
+                    
+                    # Display the extracted data immediately
+                    st.markdown("### 🎯 Extracted Transaction")
+                    display_single_transaction(extracted_data)
+                    
+                    # Store to SQLite database in background (after display)
+                    try:
+                        insert_transaction_to_db(extracted_data)
+                    except Exception as e:
+                        st.warning(f"Data displayed but database save failed: {str(e)}")
                 else:
                     st.error("Failed to extract data. Please try again.")
     
