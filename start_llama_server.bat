@@ -39,7 +39,7 @@ echo ✅ mmproj: %MMPROJ_PATH%
 echo ✅ Server: %LLAMA_CPP_PATH%
 echo.
 
-echo Starting server on http://localhost:8080 (CPU optimized)
+echo Starting server on http://localhost:8088 (CPU optimized)
 echo ========================================
 echo.
 
@@ -48,7 +48,7 @@ REM OPTIMIZED COMMAND: Maximum CPU performance for Qwen3-VL
   -m "%MODEL_PATH%" ^
   --mmproj "%MMPROJ_PATH%" ^
   --host 0.0.0.0 ^
-  --port 8080 ^
+  --port 8088 ^
   -c 8192 ^
   -t %NUMBER_OF_PROCESSORS% ^
   -tb %NUMBER_OF_PROCESSORS% ^
@@ -60,5 +60,5 @@ REM OPTIMIZED COMMAND: Maximum CPU performance for Qwen3-VL
   --mlock
 
 echo.
-echo Server ready! Test at: http://localhost:8080
+echo Server ready! Test at: http://localhost:8088
 pause

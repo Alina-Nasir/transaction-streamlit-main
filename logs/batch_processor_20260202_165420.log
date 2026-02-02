@@ -1,0 +1,31 @@
+2026-02-02 16:54:20,782 - batch_processor_service - INFO - BatchProcessorService initialized
+2026-02-02 16:54:20,784 - batch_processor_service - INFO - Monitoring folder: ./test_receipts/incoming
+2026-02-02 16:54:20,784 - batch_processor_service - INFO - TransactionFileHandler initialized with config: {'incoming_folder': './test_receipts/incoming', 'processed_folder': './test_receipts/processed', 'failed_folder': './test_receipts/failed', 'auto_move_processed': True, 'debounce_delay': 2.0, 'inference_timeout': 300, 'enabled': True}
+2026-02-02 16:54:20,786 - batch_processor_service - INFO - Batch processor service started successfully
+2026-02-02 16:54:20,786 - batch_processor_service - INFO - Running batch processor in foreground mode (Ctrl+C to stop)
+2026-02-02 16:54:30,792 - batch_processor_service - INFO - Processing stats - Success: 0, Failed: 0
+2026-02-02 16:54:40,798 - batch_processor_service - INFO - Processing stats - Success: 0, Failed: 0
+2026-02-02 16:54:50,800 - batch_processor_service - INFO - Processing stats - Success: 0, Failed: 0
+2026-02-02 16:55:00,806 - batch_processor_service - INFO - Processing stats - Success: 0, Failed: 0
+2026-02-02 16:55:10,807 - batch_processor_service - INFO - Processing stats - Success: 0, Failed: 0
+2026-02-02 16:55:19,517 - batch_processor_service - INFO - File detected: ./test_receipts/incoming\53bf7d30-85ab-4f2e-a352-eab31eabd0e8.jpeg
+2026-02-02 16:55:19,518 - batch_processor_service - DEBUG - Scheduling processing for ./test_receipts/incoming\53bf7d30-85ab-4f2e-a352-eab31eabd0e8.jpeg after 3.0s
+2026-02-02 16:55:20,812 - batch_processor_service - INFO - Processing stats - Success: 0, Failed: 0
+2026-02-02 16:55:23,552 - batch_processor_service - DEBUG - File is ready: ./test_receipts/incoming\53bf7d30-85ab-4f2e-a352-eab31eabd0e8.jpeg (size: 62582 bytes)
+2026-02-02 16:55:23,552 - batch_processor_service - INFO - Processing file: 53bf7d30-85ab-4f2e-a352-eab31eabd0e8.jpeg
+2026-02-02 16:55:23,554 - batch_processor_service - DEBUG - Running inference on 53bf7d30-85ab-4f2e-a352-eab31eabd0e8.jpeg
+2026-02-02 16:55:23,575 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:8080
+2026-02-02 16:55:27,701 - inference_engine - ERROR - llama.cpp server not running: HTTPConnectionPool(host='localhost', port=8080): Max retries exceeded with url: /health (Caused by NewConnectionError('<urllib3.connection.HTTPConnection object at 0x000002492C7B1DB0>: Failed to establish a new connection: [WinError 10061] No connection could be made because the target machine actively refused it'))
+2026-02-02 16:55:27,701 - batch_processor_service - ERROR - Inference failed for 53bf7d30-85ab-4f2e-a352-eab31eabd0e8.jpeg (model returned None)
+2026-02-02 16:55:27,703 - batch_processor_service - INFO - Moved to failed: ./test_receipts/failed\53bf7d30-85ab-4f2e-a352-eab31eabd0e8.jpeg
+2026-02-02 16:55:27,703 - batch_processor_service - DEBUG - Scheduling processing for modified file ./test_receipts/incoming\53bf7d30-85ab-4f2e-a352-eab31eabd0e8.jpeg
+2026-02-02 16:55:30,706 - batch_processor_service - WARNING - File no longer exists: ./test_receipts/incoming\53bf7d30-85ab-4f2e-a352-eab31eabd0e8.jpeg
+2026-02-02 16:55:30,816 - batch_processor_service - INFO - Processing stats - Success: 0, Failed: 1
+2026-02-02 16:55:40,818 - batch_processor_service - INFO - Processing stats - Success: 0, Failed: 1
+2026-02-02 16:55:50,821 - batch_processor_service - INFO - Processing stats - Success: 0, Failed: 1
+2026-02-02 16:56:00,835 - batch_processor_service - INFO - Processing stats - Success: 0, Failed: 1
+2026-02-02 16:56:10,840 - batch_processor_service - INFO - Processing stats - Success: 0, Failed: 1
+2026-02-02 16:56:20,851 - batch_processor_service - INFO - Processing stats - Success: 0, Failed: 1
+2026-02-02 16:56:30,865 - batch_processor_service - INFO - Processing stats - Success: 0, Failed: 1
+2026-02-02 16:56:35,139 - batch_processor_service - INFO - Batch processor interrupted by user
+2026-02-02 16:56:35,140 - batch_processor_service - INFO - Batch processor service stopped

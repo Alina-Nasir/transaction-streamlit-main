@@ -1,0 +1,39 @@
+2026-02-02 16:56:51,828 - batch_processor_service - INFO - BatchProcessorService initialized
+2026-02-02 16:56:51,829 - batch_processor_service - INFO - Monitoring folder: ./test_receipts/incoming
+2026-02-02 16:56:51,829 - batch_processor_service - INFO - TransactionFileHandler initialized with config: {'incoming_folder': './test_receipts/incoming', 'processed_folder': './test_receipts/processed', 'failed_folder': './test_receipts/failed', 'auto_move_processed': True, 'debounce_delay': 2.0, 'inference_timeout': 300, 'enabled': True}
+2026-02-02 16:56:51,830 - batch_processor_service - INFO - Batch processor service started successfully
+2026-02-02 16:56:51,830 - batch_processor_service - INFO - Running batch processor in foreground mode (Ctrl+C to stop)
+2026-02-02 16:57:01,846 - batch_processor_service - INFO - Processing stats - Success: 0, Failed: 0
+2026-02-02 16:57:11,854 - batch_processor_service - INFO - Processing stats - Success: 0, Failed: 0
+2026-02-02 16:57:15,610 - batch_processor_service - INFO - File detected: ./test_receipts/incoming\53bf7d30-85ab-4f2e-a352-eab31eabd0e8.jpeg
+2026-02-02 16:57:15,611 - batch_processor_service - DEBUG - Scheduling processing for ./test_receipts/incoming\53bf7d30-85ab-4f2e-a352-eab31eabd0e8.jpeg after 3.0s
+2026-02-02 16:57:19,652 - batch_processor_service - DEBUG - File is ready: ./test_receipts/incoming\53bf7d30-85ab-4f2e-a352-eab31eabd0e8.jpeg (size: 62582 bytes)
+2026-02-02 16:57:19,652 - batch_processor_service - INFO - Processing file: 53bf7d30-85ab-4f2e-a352-eab31eabd0e8.jpeg
+2026-02-02 16:57:19,653 - batch_processor_service - DEBUG - Running inference on 53bf7d30-85ab-4f2e-a352-eab31eabd0e8.jpeg
+2026-02-02 16:57:19,657 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:8088
+2026-02-02 16:57:21,725 - urllib3.connectionpool - DEBUG - http://localhost:8088 "GET /health HTTP/1.1" 200 15
+2026-02-02 16:57:21,858 - inference_engine - DEBUG - Sending inference request to http://localhost:8088/v1/chat/completions
+2026-02-02 16:57:21,861 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:8088
+2026-02-02 16:57:21,861 - batch_processor_service - INFO - Processing stats - Success: 0, Failed: 0
+2026-02-02 16:57:31,874 - batch_processor_service - INFO - Processing stats - Success: 0, Failed: 0
+2026-02-02 16:57:41,890 - batch_processor_service - INFO - Processing stats - Success: 0, Failed: 0
+2026-02-02 16:57:51,902 - batch_processor_service - INFO - Processing stats - Success: 0, Failed: 0
+2026-02-02 16:57:54,905 - urllib3.connectionpool - DEBUG - http://localhost:8088 "POST /v1/chat/completions HTTP/1.1" 200 1126
+2026-02-02 16:57:54,906 - inference_engine - DEBUG - Inference successful, received 457 chars
+2026-02-02 16:57:54,907 - batch_processor_service - DEBUG - Extracting JSON from response
+2026-02-02 16:57:54,908 - inference_engine - DEBUG - Successfully extracted JSON with 15 fields
+2026-02-02 16:57:54,908 - batch_processor_service - DEBUG - Saving transaction to database
+2026-02-02 16:57:54,927 - batch_processor_service - INFO - Successfully processed: 53bf7d30-85ab-4f2e-a352-eab31eabd0e8.jpeg
+2026-02-02 16:57:54,927 - batch_processor_service - DEBUG - Extracted data: {'bankName': 'easypaisa', 'Date': '07/01/2026', 'TransactionID': 'ID#44368620978', 'Amount': '8,175.00 Rs', 'ToAccount': 'Salim Winding Works', 'ToAccountNumber': '01***********9339', 'ToBankName': 'Meezan Bank', 'FromAccount': 'NIZAM UDDIN', 'FromAccountNumber': '03142487682', 'FromBankName': 'Meezan Bank', 'Branch': 'Not Found', 'PaymentMode': 'Online', 'CustomerID': 'Not Found', 'ChequeNo': 'Not Found', 'Remarks': 'Money has been sent', 'FileName': '53bf7d30-85ab-4f2e-a352-eab31eabd0e8.jpeg'}
+2026-02-02 16:57:54,929 - batch_processor_service - INFO - Moved to processed: ./test_receipts/processed\53bf7d30-85ab-4f2e-a352-eab31eabd0e8.jpeg
+2026-02-02 16:57:54,929 - batch_processor_service - DEBUG - Scheduling processing for modified file ./test_receipts/incoming\53bf7d30-85ab-4f2e-a352-eab31eabd0e8.jpeg
+2026-02-02 16:57:57,931 - batch_processor_service - WARNING - File no longer exists: ./test_receipts/incoming\53bf7d30-85ab-4f2e-a352-eab31eabd0e8.jpeg
+2026-02-02 16:58:01,918 - batch_processor_service - INFO - Processing stats - Success: 1, Failed: 0
+2026-02-02 16:58:11,933 - batch_processor_service - INFO - Processing stats - Success: 1, Failed: 0
+2026-02-02 16:58:21,945 - batch_processor_service - INFO - Processing stats - Success: 1, Failed: 0
+2026-02-02 16:58:31,957 - batch_processor_service - INFO - Processing stats - Success: 1, Failed: 0
+2026-02-02 16:58:41,958 - batch_processor_service - INFO - Processing stats - Success: 1, Failed: 0
+2026-02-02 16:58:51,964 - batch_processor_service - INFO - Processing stats - Success: 1, Failed: 0
+2026-02-02 16:59:01,966 - batch_processor_service - INFO - Processing stats - Success: 1, Failed: 0
+2026-02-02 16:59:08,637 - batch_processor_service - INFO - Batch processor interrupted by user
+2026-02-02 16:59:08,646 - batch_processor_service - INFO - Batch processor service stopped

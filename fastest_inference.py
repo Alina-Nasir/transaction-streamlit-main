@@ -48,7 +48,7 @@ def encode_image_to_base64(image):
 
 def main():
     # Configuration
-    server_url = "http://localhost:8080/v1/chat/completions"
+    server_url = "http://localhost:8088/v1/chat/completions"
     image_dir = "picture_data"
     
     print("\n" + "="*70)
@@ -57,7 +57,7 @@ def main():
     
     # Health check
     try:
-        response = requests.get("http://localhost:8080/health", timeout=5)
+        response = requests.get("http://localhost:8088/health", timeout=5)
         print(f"✅ Server running!")
     except:
         print("❌ Server not running! Run start_llama_server.bat first")

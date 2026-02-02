@@ -2,3 +2,13 @@ venv/
 .streamlit/
 picture_data/
 *.gguf
+build/
+dist/
+build_assets/
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+.env
+installer_output/
+llama-cpu/
+models_latest/

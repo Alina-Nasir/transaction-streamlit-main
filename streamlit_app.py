@@ -12,14 +12,23 @@ from datetime import datetime
 import requests
 import uuid
 import sqlite3
+import logging
 
-# Try to import PDF libraries
+# Import database manager for bundled mode compatibility
+import db_manager
+
+# Import shared inference engine (used by both streamlit and batch processor)
+import inference_engine
+
+# Import batch configuration
 try:
-    import pypdfium2 as pdfium
-    PDF_SUPPORT = True
+    import batch_config
+    BATCH_CONFIG_AVAILABLE = True
 except ImportError:
-    PDF_SUPPORT = False
-    st.warning("PyPDFium2 not available - PDF support limited")
+    BATCH_CONFIG_AVAILABLE = False
+
+# Setup logging
+logger = logging.getLogger(__name__)
 
 # ---------- PAGE CONFIG ----------
 st.set_page_config(
@@ -116,326 +125,22 @@ def convert_pdf_to_images(pdf_file):
         st.error(f"Error converting PDF: {str(e)}")
         return None
 
-def init_sqlite_db():
-    """Initialize SQLite database and create table if it doesn't exist"""
-    try:
-        conn = sqlite3.connect('transactions.db')
-        cursor = conn.cursor()
-        
-        # Create table if it doesn't exist
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS transactions (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                bankName TEXT,
-                Date TEXT,
-                TransactionID TEXT,
-                Amount TEXT,
-                FromAccount TEXT,
-                FromAccountNumber TEXT,
-                FromBankName TEXT,
-                ToAccount TEXT,
-                ToAccountNumber TEXT,
-                ToBankName TEXT,
-                Branch TEXT,
-                PaymentMode TEXT,
-                CustomerID TEXT,
-                ChequeNo TEXT,
-                Remarks TEXT,
-                FileName TEXT,
-                ProcessedDate TEXT,
-                CreatedAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        ''')
-        
-        conn.commit()
-        conn.close()
-        return True
-    except Exception as e:
-        print(f"Error initializing SQLite database: {str(e)}")
-        return False
+# ---------- FUNCTIONS ----------
+# Use shared inference engine functions
+def convert_pdf_to_images(pdf_file):
+    """Convert PDF file to list of PIL Images using pypdfium2"""
+    return inference_engine.convert_pdf_to_images(pdf_file)
 
-def insert_transaction_to_db(data):
-    """Insert extracted transaction data into SQLite database"""
-    try:
-        conn = sqlite3.connect('transactions.db')
-        cursor = conn.cursor()
-        
-        # Insert transaction data
-        cursor.execute('''
-            INSERT INTO transactions (
-                bankName, Date, TransactionID, Amount, FromAccount, FromAccountNumber,
-                FromBankName, ToAccount, ToAccountNumber, ToBankName, Branch, PaymentMode,
-                CustomerID, ChequeNo, Remarks, FileName, ProcessedDate
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ''', (
-            data.get('bankName', 'Not Found'),
-            data.get('Date', 'Not Found'),
-            data.get('TransactionID', 'Not Found'),
-            data.get('Amount', 'Not Found'),
-            data.get('FromAccount', 'Not Found'),
-            data.get('FromAccountNumber', 'Not Found'),
-            data.get('FromBankName', 'Not Found'),
-            data.get('ToAccount', 'Not Found'),
-            data.get('ToAccountNumber', 'Not Found'),
-            data.get('ToBankName', 'Not Found'),
-            data.get('Branch', 'Not Found'),
-            data.get('PaymentMode', 'Not Found'),
-            data.get('CustomerID', 'Not Found'),
-            data.get('ChequeNo', 'Not Found'),
-            data.get('Remarks', 'Not Found'),
-            data.get('FileName', 'Not Found'),
-            data.get('ProcessedDate', datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
-        ))
-        
-        conn.commit()
-        conn.close()
-        print(f"Transaction stored in database successfully")
-        return True
-    except Exception as e:
-        print(f"Error inserting transaction to database: {str(e)}")
-        return False
+# Use db_manager functions
+init_sqlite_db = db_manager.init_db
+insert_transaction_to_db = db_manager.insert_record
 
-def get_pakistani_bank_prompt():
-    """Return optimized prompt for Pakistani bank transaction slips"""
-    return """
-      
-
-       ### Task: OCR Pakistani bank slip to JSON.
-Rules:
-1. Date: Find Date/Trx/Posted/Value. Convert to DD/MM/YYYY.
-2. Separation: "From" (Sender/Debit/Payer) is DISTINCT from "To" (Receiver/Credit/Beneficiary). Never mix them.
-3. Accuracy: Extract VISIBLE text only. Use "Not Found" for missing fields. Do not guess bank names.
-
-### JSON Output:
-{
-"bankName": "Top header/Logo text",
-"Date": "DD/MM/YYYY",
-"TransactionID": "Ref/Doc/Chq No",
-"Amount": "Value with PKR",
-"FromAccount": "Sender Name",
-"FromAccountNumber": "Sender Account No",
-"FromBankName": "Sender Bank",
-"ToAccount": "Receiver Name",
-"ToAccountNumber": "Receiver Account No",
-"ToBankName": "Receiver Bank",
-"Branch": "Branch Name/Code",
-"PaymentMode": "Online/Cash/Cheque",
-"CustomerID": "ID if visible",
-"ChequeNo": "Cheque No",
-"Remarks": "Notes"
-}
-
-
-"""
-
-def resize_image_to_512p(image):
-    """
-    Resize image to 512p (512 max dimension) while maintaining aspect ratio
-    
-    Args:
-        image: PIL Image object
-    
-    Returns:
-        Resized PIL Image object
-    """
-    max_dimension = 1024
-    
-    # Calculate new dimensions maintaining aspect ratio
-    if max(image.size) <= max_dimension:
-        return image
-    
-    if image.size[0] > image.size[1]:
-        scale_ratio = max_dimension / image.size[0]
-    else:
-        scale_ratio = max_dimension / image.size[1]
-    
-    new_width = int(image.size[0] * scale_ratio)
-    new_height = int(image.size[1] * scale_ratio)
-    
-    # Resize with high-quality resampling
-    resized = image.resize((new_width, new_height), Image.Resampling.LANCZOS)
-    return resized
-
-def encode_image_to_base64(image):
-    """Encode PIL Image to base64 JPEG"""
-    buffered = io.BytesIO()
-    image.save(buffered, format="JPEG", quality=90)
-    return base64.b64encode(buffered.getvalue()).decode('utf-8')
-
-def call_local_model_with_image(image_file, prompt=None):
-    """Call llama.cpp Qwen3-VL model via HTTP with uploaded image/PDF"""
-    try:
-        server_url = "http://localhost:8080/v1/chat/completions"
-        
-        # Health check
-        try:
-            requests.get("http://localhost:8080/health", timeout=5)
-        except:
-            st.error("❌ llama.cpp server not running! Run start_llama_server.bat first")
-            return None
-        
-        # Use Pakistani bank specific prompt
-        effective_prompt = prompt if prompt else get_pakistani_bank_prompt()
-        
-        # Handle Image/PDF processing
-        # Check if file is PDF
-        if hasattr(image_file, 'type') and image_file.type == "application/pdf":
-            if not PDF_SUPPORT:
-                st.error("PDF processing requires pypdfium2. Install with: pip install pypdfium2")
-                return None
-                
-            pdf_images = convert_pdf_to_images(image_file)
-            if pdf_images and len(pdf_images) > 0:
-                image = pdf_images[0]
-            else:
-                return None
-        else:
-            image = Image.open(image_file)
-        
-        if image.mode != 'RGB':
-            image = image.convert('RGB')
-        
-        # Resize to 512p for faster inference (same methodology as fastest_inference.py)
-        image = resize_image_to_512p(image)
-        
-        # Encode image to base64
-        img_base64 = encode_image_to_base64(image)
-        
-        # Add unique ID to prevent caching
-        unique_id = str(uuid.uuid4())[:8]
-        
-        # Prepare llama.cpp API request
-        payload = {
-            "model": "qwen3-vl-2b-instruct-Q3_K_M",
-            "messages": [
-                {
-                    "role": "user",
-                    "content": [
-                        {"type": "text", "text": f"{effective_prompt} [ID: {unique_id}]"},
-                        {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{img_base64}"}}
-                    ]
-                }
-            ],
-            "temperature": 0.1,
-            "max_tokens": 512,
-            "top_p": 0.7,
-            "top_k": 40,
-            "cache_prompt": False
-        }
-        
-        # Call llama.cpp HTTP server
-        response = requests.post(
-            server_url,
-            json=payload,
-            headers={"Content-Type": "application/json"},
-            timeout=300  # 5 minutes for CPU image processing
-        )
-        
-        if response.status_code == 200:
-            result = response.json()
-            if 'choices' in result and len(result['choices']) > 0:
-                output_text = result['choices'][0]['message']['content']
-                return output_text
-            else:
-                st.error("No response from model")
-                return None
-        else:
-            st.error(f"llama.cpp Error: {response.status_code}")
-            st.error(response.text[:200])
-            return None
-
-    except requests.exceptions.Timeout:
-        st.error("❌ TIMEOUT - Server overloaded or image processing taking too long")
-        return None
-    except Exception as e:
-        st.error(f"llama.cpp Inference Error: {str(e)}")
-        st.error("Make sure llama.cpp server is running on http://localhost:8080")
-        return None
-
-def extract_json_from_response(response_text):
-    """Extract JSON from API response"""
-    try:
-        response_text = response_text.strip()
-        
-        # Find JSON pattern
-        json_pattern = r'\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}'
-        matches = re.findall(json_pattern, response_text, re.DOTALL)
-        
-        if matches:
-            json_str = max(matches, key=len)
-            json_str = json_str.replace('\\', '').replace('\n', ' ')
-            data = json.loads(json_str)
-            
-            # Standardize field names
-            standardized_data = {}
-            field_mappings = {
-                'bankName': ['bankName', 'bank', 'bank_name', 'Bank Name'],
-                'Date': ['Date', 'date', 'Transaction Date', 'DATE'],
-                'TransactionID': ['TransactionID', 'transactionID', 'Transaction ID', 'Reference No', 'Chq #', 'Document Code'],
-                'Amount': ['Amount', 'amount', 'Transaction Amount', 'AMOUNT', 'Actual Amount'],
-                'ToAccount': ['ToAccount', 'toAccount', 'To Account', 'Beneficiary', 'Customer Name', 'Customer', 'Receiver Name'],
-                'ToAccountNumber': ['ToAccountNumber', 'toAccountNumber', 'To Account Number', 'Beneficiary Account', 'Credit To', 'To A/C', 'Receiver Account'],
-                'ToBankName': ['ToBankName', 'toBankName', 'To Bank Name', 'Beneficiary Bank', 'Receiver Bank', 'Credit Bank'],
-                'FromAccount': ['FromAccount', 'fromAccount', 'From Account', 'Sender', 'Payer', 'Sender Name'],
-                'FromAccountNumber': ['FromAccountNumber', 'fromAccountNumber', 'From Account Number', 'Sender Account', 'Debit From', 'From A/C', 'Payer Account'],
-                'FromBankName': ['FromBankName', 'fromBankName', 'From Bank Name', 'Sender Bank', 'Payer Bank', 'Debit Bank'],
-                'Branch': ['Branch', 'branch', 'BRANCH'],
-                'PaymentMode': ['PaymentMode', 'paymentMode', 'Payment Mode', 'Mode', 'PaymentMode'],
-                'CustomerID': ['CustomerID', 'customerID', 'Customer ID', 'Customer No'],
-                'ChequeNo': ['ChequeNo', 'chequeNo', 'Cheque No', 'Cheque Number', 'Actual Cheque No'],
-                'Remarks': ['Remarks', 'remarks', 'Note', 'Description']
-            }
-            
-            for std_field, possible_names in field_mappings.items():
-                value_found = False
-                for name in possible_names:
-                    if name in data:
-                        standardized_data[std_field] = str(data[name]).strip()
-                        value_found = True
-                        break
-                if not value_found:
-                    standardized_data[std_field] = "Not Found"
-            
-            return standardized_data
-            
-        else:
-            # Return empty data if JSON not found
-            return {
-                "bankName": "Not Found",
-                "Date": "Not Found", 
-                "TransactionID": "Not Found",
-                "Amount": "Not Found",
-                "ToAccount": "Not Found",
-                "ToAccountNumber": "Not Found",
-                "ToBankName": "Not Found",
-                "FromAccount": "Not Found",
-                "FromAccountNumber": "Not Found",
-                "FromBankName": "Not Found",
-                "Branch": "Not Found",
-                "PaymentMode": "Not Found",
-                "CustomerID": "Not Found",
-                "ChequeNo": "Not Found",
-                "Remarks": "Not Found"
-            }
-            
-    except json.JSONDecodeError:
-        return {
-            "bankName": "Not Found",
-            "Date": "Not Found", 
-            "TransactionID": "Not Found",
-            "Amount": "Not Found",
-            "ToAccount": "Not Found",
-            "ToAccountNumber": "Not Found",
-            "ToBankName": "Not Found",
-            "FromAccount": "Not Found",
-            "FromAccountNumber": "Not Found",
-            "FromBankName": "Not Found",
-            "Branch": "Not Found",
-            "PaymentMode": "Not Found",
-            "CustomerID": "Not Found",
-            "ChequeNo": "Not Found",
-            "Remarks": "Not Found"
-        }
+# Import inference functions from shared module
+get_pakistani_bank_prompt = inference_engine.get_pakistani_bank_prompt
+resize_image_to_512p = inference_engine.resize_image_to_512p
+encode_image_to_base64 = inference_engine.encode_image_to_base64
+call_local_model_with_image = inference_engine.call_local_model_with_image
+extract_json_from_response = inference_engine.extract_json_from_response
 
 def get_bank_style_class(bank_name):
     """Get CSS class based on bank name"""
@@ -621,6 +326,147 @@ def export_to_excel(dataframe):
     
     processed_data = output.getvalue()
     return processed_data
+
+# ---------- BATCH SETTINGS PAGE ----------
+def batch_settings_page():
+    """Settings page for batch processing configuration"""
+    st.markdown("# ⚙️ Batch Processing Settings")
+    
+    if not BATCH_CONFIG_AVAILABLE:
+        st.error("❌ Batch configuration module not available. Please ensure batch_config.py is installed.")
+        return
+    
+    # Get current configuration
+    current_config = batch_config.load_config()
+    
+    st.markdown("## Configuration")
+    st.info("""
+    Configure the batch processor to automatically monitor a folder for new bank slips
+    and run inference on them 24/7.
+    """)
+    
+    # Incoming folder
+    st.markdown("### 📥 Incoming Folder")
+    st.caption("Folder where new receipt images should be placed")
+    incoming_folder = st.text_input(
+        "Incoming Folder Path",
+        value=current_config.get('incoming_folder', ''),
+        key="incoming_folder_input"
+    )
+    
+    # Processed folder
+    st.markdown("### ✅ Processed Folder")
+    st.caption("Where to move successfully processed files")
+    auto_move = st.checkbox(
+        "Auto-move processed files",
+        value=current_config.get('auto_move_processed', True),
+        key="auto_move_checkbox"
+    )
+    
+    if auto_move:
+        processed_folder = st.text_input(
+            "Processed Folder Path",
+            value=current_config.get('processed_folder', ''),
+            key="processed_folder_input"
+        )
+    else:
+        processed_folder = None
+    
+    # Failed folder
+    st.markdown("### ❌ Failed Folder")
+    st.caption("Where to move files that fail processing")
+    failed_folder = st.text_input(
+        "Failed Folder Path",
+        value=current_config.get('failed_folder', ''),
+        key="failed_folder_input"
+    )
+    
+    # Advanced settings
+    st.markdown("### ⚙️ Advanced Settings")
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        debounce_delay = st.number_input(
+            "Debounce Delay (seconds)",
+            min_value=0.5,
+            max_value=30.0,
+            value=float(current_config.get('debounce_delay', 3.0)),
+            step=0.5,
+            help="Wait time before processing a newly detected file (allows write to complete)"
+        )
+    
+    with col2:
+        inference_timeout = st.number_input(
+            "Inference Timeout (seconds)",
+            min_value=30,
+            max_value=900,
+            value=int(current_config.get('inference_timeout', 300)),
+            step=30,
+            help="Maximum time to wait for inference to complete"
+        )
+    
+    # Save button
+    if st.button("💾 Save Settings", type="primary", use_container_width=True):
+        updated_config = {
+            'incoming_folder': incoming_folder,
+            'processed_folder': processed_folder if auto_move else '',
+            'failed_folder': failed_folder,
+            'auto_move_processed': auto_move,
+            'debounce_delay': debounce_delay,
+            'inference_timeout': inference_timeout,
+            'enabled': current_config.get('enabled', False)
+        }
+        
+        # Validate configuration
+        errors = batch_config.validate_config(updated_config)
+        if errors:
+            st.error("❌ Configuration validation failed:")
+            for error in errors:
+                st.error(f"  • {error}")
+        else:
+            batch_config.save_config(updated_config)
+            st.success("✅ Configuration saved successfully!")
+            st.info("📝 Note: Restart the application for batch processor changes to take effect")
+    
+    # Show current configuration summary
+    st.markdown("## Current Configuration")
+    config_summary = batch_config.get_config_summary()
+    
+    col1, col2 = st.columns(2)
+    with col1:
+        st.markdown("**Folders:**")
+        st.code(f"""
+Incoming:   {config_summary['incoming_folder']}
+Processed:  {config_summary['processed_folder']}
+Failed:     {config_summary['failed_folder']}
+        """)
+    
+    with col2:
+        st.markdown("**Settings:**")
+        st.code(f"""
+Auto-move:     {config_summary['auto_move_processed']}
+Debounce:      {config_summary['debounce_delay']}s
+Timeout:       {config_summary['inference_timeout']}s
+Service:       {'Enabled' if config_summary['enabled'] else 'Disabled'}
+        """)
+    
+    # Instructions
+    st.markdown("## 📖 How Batch Processing Works")
+    st.markdown("""
+    1. **Monitoring**: The batch processor watches the incoming folder for new image files
+    2. **Processing**: When a new .jpg, .jpeg, .png, or .pdf file is detected:
+       - Waits for the file to be fully written
+       - Runs inference using the same model as the manual processor
+       - Extracts transaction details
+    3. **Storage**: Successfully processed transactions are saved to the database
+    4. **Organization**: Files are moved to the appropriate folders:
+       - ✅ Processed folder (if auto-move enabled)
+       - ❌ Failed folder (if processing fails)
+    5. **Logging**: All operations are logged to: `%APPDATA%\PakistanBankParser\logs\`
+    
+    The batch processor runs 24/7 in the background, processing files as they arrive.
+    """)
+
 
 # ---------- MAIN APP ----------
 def main():
@@ -811,6 +657,265 @@ def main():
                 st.success("All data cleared!")
                 st.rerun()
 
+                st.session_state.dataframe = pd.DataFrame()
+                st.session_state.current_file = None
+                st.session_state.current_result = None
+                st.success("All data cleared!")
+                st.rerun()
+
+def view_database():
+    """View all saved transactions from SQLite database"""
+    
+    # Initialize SQLite database
+    init_sqlite_db()
+    
+    # Header
+    st.markdown('<div class="pakistan-flag">', unsafe_allow_html=True)
+    st.markdown('<h1 class="main-header">📊 Saved Transactions Database</h1>', unsafe_allow_html=True)
+    st.markdown("</div>", unsafe_allow_html=True)
+    
+    st.markdown("View all transaction records saved in the database")
+    
+    try:
+        # Get database path
+        db_path = db_manager.get_db_path()
+        
+        # Connect to database
+        conn = sqlite3.connect(db_path)
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+        
+        # Get all transactions
+        cursor.execute('SELECT * FROM transactions ORDER BY CreatedAt DESC')
+        rows = cursor.fetchall()
+        
+        if not rows:
+            st.info("📭 No transactions saved yet. Start processing slips to populate the database!")
+            conn.close()
+            return
+        
+        # Convert to DataFrame
+        columns = [description[0] for description in cursor.description]
+        df = pd.DataFrame([dict(row) for row in rows], columns=columns)
+        
+        # Display summary metrics
+        st.markdown("### 📈 Database Summary")
+        col1, col2, col3, col4, col5 = st.columns(5)
+        
+        with col1:
+            st.markdown('<div class="metric-card">', unsafe_allow_html=True)
+            st.metric("Total Records", len(df))
+            st.markdown('</div>', unsafe_allow_html=True)
+        
+        with col2:
+            st.markdown('<div class="metric-card">', unsafe_allow_html=True)
+            unique_banks = df['bankName'].nunique()
+            st.metric("Unique Banks", unique_banks)
+            st.markdown('</div>', unsafe_allow_html=True)
+        
+        with col3:
+            st.markdown('<div class="metric-card">', unsafe_allow_html=True)
+            try:
+                amounts = df['Amount'].apply(clean_amount)
+                total_amount = amounts.sum()
+                st.metric("Total Amount", f"PKR {total_amount:,.0f}")
+            except:
+                st.metric("Total Amount", "PKR -")
+            st.markdown('</div>', unsafe_allow_html=True)
+        
+        with col4:
+            st.markdown('<div class="metric-card">', unsafe_allow_html=True)
+            try:
+                complete = df.apply(
+                    lambda x: all(x[f] != "Not Found" for f in ['bankName', 'Date', 'Amount']), 
+                    axis=1
+                ).sum()
+                st.metric("Complete Records", complete)
+            except:
+                st.metric("Complete Records", "-")
+            st.markdown('</div>', unsafe_allow_html=True)
+        
+        with col5:
+            st.markdown('<div class="metric-card">', unsafe_allow_html=True)
+            try:
+                incomplete = len(df) - complete
+                st.metric("Incomplete Records", incomplete)
+            except:
+                st.metric("Incomplete Records", "-")
+            st.markdown('</div>', unsafe_allow_html=True)
+        
+        # Filter and Search Section
+        st.markdown("### 🔍 Filter & Search")
+        
+        filter_col1, filter_col2, filter_col3 = st.columns(3)
+        
+        with filter_col1:
+            search_term = st.text_input("Search by bank name, account, or transaction ID", "")
+        
+        with filter_col2:
+            date_from = st.date_input("From Date", value=None)
+        
+        with filter_col3:
+            date_to = st.date_input("To Date", value=None)
+        
+        # Apply filters
+        filtered_df = df.copy()
+        
+        if search_term:
+            search_lower = search_term.lower()
+            filtered_df = filtered_df[
+                filtered_df.astype(str).apply(
+                    lambda x: x.str.contains(search_lower, case=False).any(), axis=1
+                )
+            ]
+        
+        if date_from:
+            try:
+                filtered_df = filtered_df[pd.to_datetime(filtered_df['Date'], format='%d/%m/%Y', errors='coerce') >= pd.Timestamp(date_from)]
+            except:
+                pass
+        
+        if date_to:
+            try:
+                filtered_df = filtered_df[pd.to_datetime(filtered_df['Date'], format='%d/%m/%Y', errors='coerce') <= pd.Timestamp(date_to)]
+            except:
+                pass
+        
+        st.markdown(f"**Showing {len(filtered_df)} of {len(df)} records**")
+        
+        # Data table view with all columns
+        st.markdown("### 📊 Transactions Table")
+        
+        # Create display dataframe
+        display_df = filtered_df.copy()
+        
+        # Reorder columns for better visibility
+        column_order = [
+            'bankName', 'Date', 'TransactionID', 'Amount', 
+            'FromAccount', 'FromAccountNumber', 'FromBankName',
+            'ToAccount', 'ToAccountNumber', 'ToBankName',
+            'Branch', 'PaymentMode', 'CustomerID', 'ChequeNo', 'Remarks'
+        ]
+        
+        existing_cols = [col for col in column_order if col in display_df.columns]
+        display_df = display_df[existing_cols]
+        
+        st.dataframe(
+            display_df,
+            use_container_width=True,
+            hide_index=True,
+            column_config={
+                "Amount": st.column_config.TextColumn(width="medium"),
+                "Remarks": st.column_config.TextColumn(width="large"),
+            }
+        )
+        
+        # Export section
+        st.markdown("---")
+        st.markdown("### 📥 Export Data")
+        
+        export_col1, export_col2, export_col3, export_col4 = st.columns(4)
+        
+        with export_col1:
+            # Export filtered as CSV
+            csv_data = filtered_df.to_csv(index=False, encoding='utf-8')
+            st.download_button(
+                label="Download Filtered as CSV",
+                data=csv_data,
+                file_name=f"transactions_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                mime="text/csv",
+                use_container_width=True
+            )
+        
+        with export_col2:
+            # Export all as CSV
+            csv_all_data = df.to_csv(index=False, encoding='utf-8')
+            st.download_button(
+                label="Download All as CSV",
+                data=csv_all_data,
+                file_name=f"all_transactions_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                mime="text/csv",
+                use_container_width=True
+            )
+        
+        with export_col3:
+            # Export filtered as Excel
+            output = io.BytesIO()
+            with pd.ExcelWriter(output, engine='openpyxl') as writer:
+                filtered_df.to_excel(writer, index=False, sheet_name='Transactions')
+            excel_data = output.getvalue()
+            st.download_button(
+                label="Download Filtered as Excel",
+                data=excel_data,
+                file_name=f"transactions_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                use_container_width=True
+            )
+        
+        with export_col4:
+            # Export all as Excel
+            output_all = io.BytesIO()
+            with pd.ExcelWriter(output_all, engine='openpyxl') as writer:
+                df.to_excel(writer, index=False, sheet_name='Transactions')
+            excel_all_data = output_all.getvalue()
+            st.download_button(
+                label="Download All as Excel",
+                data=excel_all_data,
+                file_name=f"all_transactions_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                use_container_width=True
+            )
+        
+        # Database management section
+        st.markdown("---")
+        st.markdown("### ⚙️ Database Management")
+        
+        db_info_col1, db_info_col2 = st.columns(2)
+        
+        with db_info_col1:
+            st.info(f"""
+            **Database Location:** 
+            `{db_path}`
+            
+            **Total Records:** {len(df)}
+            **Database Size:** {os.path.getsize(db_path) / 1024 / 1024:.2f} MB
+            """)
+        
+        with db_info_col2:
+            if st.button("🗑️ Delete All Records", type="secondary", use_container_width=True):
+                if st.session_state.get('confirm_delete', False):
+                    try:
+                        cursor.execute('DELETE FROM transactions')
+                        conn.commit()
+                        st.success("✅ All records deleted!")
+                        st.session_state.confirm_delete = False
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Error deleting records: {e}")
+                else:
+                    st.session_state.confirm_delete = True
+                    st.warning("⚠️ Click again to confirm deletion of ALL records")
+        
+        conn.close()
+        
+    except Exception as e:
+        st.error(f"❌ Error accessing database: {str(e)}")
+        import traceback
+        st.error(traceback.format_exc())
+
 # Run the app
 if __name__ == "__main__":
-    main()
+    # Create navigation
+    st.sidebar.markdown("# Navigation")
+    page = st.sidebar.radio(
+        "Select Page",
+        ["Process Transactions", "View Database", "Batch Settings"],
+        label_visibility="collapsed"
+    )
+    
+    if page == "Process Transactions":
+        main()
+    elif page == "View Database":
+        view_database()
+    else:
+        batch_settings_page()
