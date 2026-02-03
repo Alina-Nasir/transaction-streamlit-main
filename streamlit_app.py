@@ -329,11 +329,11 @@ def export_to_excel(dataframe):
 
 # ---------- BATCH SETTINGS PAGE ----------
 def batch_settings_page():
-    """Settings page for batch processing configuration"""
-    st.markdown("# ⚙️ Batch Processing Settings")
+    """Simplified read-only settings page for batch processing configuration"""
+    st.markdown("# Batch Processing Status")
     
     if not BATCH_CONFIG_AVAILABLE:
-        st.error("❌ Batch configuration module not available. Please ensure batch_config.py is installed.")
+        st.error("Batch configuration module not available.")
         return
     
     # Get current configuration
@@ -341,131 +341,74 @@ def batch_settings_page():
     
     st.markdown("## Configuration")
     st.info("""
-    Configure the batch processor to automatically monitor a folder for new bank slips
-    and run inference on them 24/7.
+    The batch processor automatically monitors a folder for new bank slips and processes them 24/7.
+    These settings are managed by the system administrator.
     """)
     
-    # Incoming folder
-    st.markdown("### 📥 Incoming Folder")
-    st.caption("Folder where new receipt images should be placed")
-    incoming_folder = st.text_input(
-        "Incoming Folder Path",
-        value=current_config.get('incoming_folder', ''),
-        key="incoming_folder_input"
-    )
-    
-    # Processed folder
-    st.markdown("### ✅ Processed Folder")
-    st.caption("Where to move successfully processed files")
-    auto_move = st.checkbox(
-        "Auto-move processed files",
-        value=current_config.get('auto_move_processed', True),
-        key="auto_move_checkbox"
-    )
-    
-    if auto_move:
-        processed_folder = st.text_input(
-            "Processed Folder Path",
-            value=current_config.get('processed_folder', ''),
-            key="processed_folder_input"
-        )
-    else:
-        processed_folder = None
-    
-    # Failed folder
-    st.markdown("### ❌ Failed Folder")
-    st.caption("Where to move files that fail processing")
-    failed_folder = st.text_input(
-        "Failed Folder Path",
-        value=current_config.get('failed_folder', ''),
-        key="failed_folder_input"
-    )
-    
-    # Advanced settings
-    st.markdown("### ⚙️ Advanced Settings")
+    # Display configuration as read-only metrics
     col1, col2 = st.columns(2)
     
     with col1:
-        debounce_delay = st.number_input(
-            "Debounce Delay (seconds)",
-            min_value=0.5,
-            max_value=30.0,
-            value=float(current_config.get('debounce_delay', 3.0)),
-            step=0.5,
-            help="Wait time before processing a newly detected file (allows write to complete)"
-        )
+        st.markdown("### Folder Paths")
+        st.code(f"""Incoming:
+{current_config.get('incoming_folder', 'Not configured')}
+
+Processed:
+{current_config.get('processed_folder', 'Not configured')}
+
+Failed:
+{current_config.get('failed_folder', 'Not configured')}""")
     
     with col2:
-        inference_timeout = st.number_input(
-            "Inference Timeout (seconds)",
-            min_value=30,
-            max_value=900,
-            value=int(current_config.get('inference_timeout', 300)),
-            step=30,
-            help="Maximum time to wait for inference to complete"
-        )
-    
-    # Save button
-    if st.button("💾 Save Settings", type="primary", use_container_width=True):
-        updated_config = {
-            'incoming_folder': incoming_folder,
-            'processed_folder': processed_folder if auto_move else '',
-            'failed_folder': failed_folder,
-            'auto_move_processed': auto_move,
-            'debounce_delay': debounce_delay,
-            'inference_timeout': inference_timeout,
-            'enabled': current_config.get('enabled', False)
-        }
+        st.markdown("### Processing Settings")
+        is_enabled = current_config.get('enabled', False)
         
-        # Validate configuration
-        errors = batch_config.validate_config(updated_config)
-        if errors:
-            st.error("❌ Configuration validation failed:")
-            for error in errors:
-                st.error(f"  • {error}")
+        st.write(f"**Service Status:** {'🟢 Enabled' if is_enabled else '🔴 Disabled'}")
+        st.write(f"**Auto-move processed files:** {current_config.get('auto_move_processed', True)}")
+        st.write(f"**Debounce delay:** {current_config.get('debounce_delay', 3.0)} seconds")
+        st.write(f"**Inference timeout:** {current_config.get('inference_timeout', 300)} seconds")
+    
+    # Information section
+    st.markdown("## How It Works")
+    with st.expander("Batch Processing Details"):
+        st.markdown("""
+        **Incoming Folder:** Drop new bank slip images here
+        - The system monitors this folder 24/7
+        - Automatically detects new files
+        
+        **Processing:** Files are analyzed automatically
+        - Uses the same AI model as manual processing
+        - Results saved to database
+        
+        **Organization:**
+        - Processed files → Processed folder
+        - Failed files → Failed folder
+        - All activity logged
+        
+        **No action needed** - just add images to the incoming folder!
+        """)
+    
+    # Log files viewer
+    st.markdown("## Recent Activity")
+    try:
+        log_dir = db_manager.get_log_dir()
+        log_files = sorted([f for f in os.listdir(log_dir) if f.startswith('batch_processor_')], reverse=True)
+        
+        if log_files:
+            selected_log = st.selectbox("View log file:", log_files[:5])
+            log_path = os.path.join(log_dir, selected_log)
+            
+            with open(log_path, 'r', encoding='utf-8') as f:
+                log_content = f.read()
+            
+            # Show last 50 lines
+            lines = log_content.split('\n')
+            recent_lines = '\n'.join(lines[-50:])
+            st.text_area("Log preview (last 50 lines):", recent_lines, height=300, disabled=True)
         else:
-            batch_config.save_config(updated_config)
-            st.success("✅ Configuration saved successfully!")
-            st.info("📝 Note: Restart the application for batch processor changes to take effect")
-    
-    # Show current configuration summary
-    st.markdown("## Current Configuration")
-    config_summary = batch_config.get_config_summary()
-    
-    col1, col2 = st.columns(2)
-    with col1:
-        st.markdown("**Folders:**")
-        st.code(f"""
-Incoming:   {config_summary['incoming_folder']}
-Processed:  {config_summary['processed_folder']}
-Failed:     {config_summary['failed_folder']}
-        """)
-    
-    with col2:
-        st.markdown("**Settings:**")
-        st.code(f"""
-Auto-move:     {config_summary['auto_move_processed']}
-Debounce:      {config_summary['debounce_delay']}s
-Timeout:       {config_summary['inference_timeout']}s
-Service:       {'Enabled' if config_summary['enabled'] else 'Disabled'}
-        """)
-    
-    # Instructions
-    st.markdown("## 📖 How Batch Processing Works")
-    st.markdown("""
-    1. **Monitoring**: The batch processor watches the incoming folder for new image files
-    2. **Processing**: When a new .jpg, .jpeg, .png, or .pdf file is detected:
-       - Waits for the file to be fully written
-       - Runs inference using the same model as the manual processor
-       - Extracts transaction details
-    3. **Storage**: Successfully processed transactions are saved to the database
-    4. **Organization**: Files are moved to the appropriate folders:
-       - ✅ Processed folder (if auto-move enabled)
-       - ❌ Failed folder (if processing fails)
-    5. **Logging**: All operations are logged to: `%APPDATA%\PakistanBankParser\logs\`
-    
-    The batch processor runs 24/7 in the background, processing files as they arrive.
-    """)
+            st.info("No batch processor logs found yet. Processing will begin when files are added.")
+    except Exception as e:
+        st.warning(f"Could not read logs: {e}")
 
 
 # ---------- MAIN APP ----------
@@ -700,7 +643,7 @@ def view_database():
         
         # Display summary metrics
         st.markdown("### 📈 Database Summary")
-        col1, col2, col3, col4, col5 = st.columns(5)
+        col1, col2 = st.columns(2)
         
         with col1:
             st.markdown('<div class="metric-card">', unsafe_allow_html=True)
@@ -711,37 +654,6 @@ def view_database():
             st.markdown('<div class="metric-card">', unsafe_allow_html=True)
             unique_banks = df['bankName'].nunique()
             st.metric("Unique Banks", unique_banks)
-            st.markdown('</div>', unsafe_allow_html=True)
-        
-        with col3:
-            st.markdown('<div class="metric-card">', unsafe_allow_html=True)
-            try:
-                amounts = df['Amount'].apply(clean_amount)
-                total_amount = amounts.sum()
-                st.metric("Total Amount", f"PKR {total_amount:,.0f}")
-            except:
-                st.metric("Total Amount", "PKR -")
-            st.markdown('</div>', unsafe_allow_html=True)
-        
-        with col4:
-            st.markdown('<div class="metric-card">', unsafe_allow_html=True)
-            try:
-                complete = df.apply(
-                    lambda x: all(x[f] != "Not Found" for f in ['bankName', 'Date', 'Amount']), 
-                    axis=1
-                ).sum()
-                st.metric("Complete Records", complete)
-            except:
-                st.metric("Complete Records", "-")
-            st.markdown('</div>', unsafe_allow_html=True)
-        
-        with col5:
-            st.markdown('<div class="metric-card">', unsafe_allow_html=True)
-            try:
-                incomplete = len(df) - complete
-                st.metric("Incomplete Records", incomplete)
-            except:
-                st.metric("Incomplete Records", "-")
             st.markdown('</div>', unsafe_allow_html=True)
         
         # Filter and Search Section
@@ -909,7 +821,7 @@ if __name__ == "__main__":
     st.sidebar.markdown("# Navigation")
     page = st.sidebar.radio(
         "Select Page",
-        ["Process Transactions", "View Database", "Batch Settings"],
+        ["Process Transactions", "View Database", "Auto Invocation Feature"],
         label_visibility="collapsed"
     )
     

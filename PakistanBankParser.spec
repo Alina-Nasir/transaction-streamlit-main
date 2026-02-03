@@ -2,9 +2,9 @@
 import os
 from PyInstaller.utils.hooks import copy_metadata, collect_data_files
 
-# Get DLL files from build_assets/bin
+# Get DLL files from llama-cpu directory
 dll_files = []
-bin_path = 'build_assets/bin'
+bin_path = 'llama-cpu'
 for file in os.listdir(bin_path):
     if file.endswith('.dll'):
         dll_files.append((os.path.join(bin_path, file), 'bin'))
@@ -13,8 +13,8 @@ for file in os.listdir(bin_path):
 datas_with_metadata = [
     ('streamlit_app.py', '.'),
     ('db_manager.py', '.'),
-    ('build_assets/model/model.gguf', 'model'),
-    ('build_assets/model/mmproj.gguf', 'model'),
+    ('models_latest/model.gguf', 'model'),
+    ('models_latest/mmproj.gguf', 'model'),
 ]
 
 # Add package metadata
@@ -49,7 +49,7 @@ a = Analysis(
     ['launcher.py'],
     pathex=[],
     binaries=[
-        ('build_assets/bin/llama-server.exe', 'bin'),
+        ('llama-cpu/llama-server.exe', 'bin'),
     ] + dll_files,
     datas=datas_with_metadata,
     hiddenimports=[
