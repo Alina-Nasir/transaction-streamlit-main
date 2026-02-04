@@ -27,15 +27,6 @@ def get_default_config():
             os.environ.get('USERPROFILE', os.path.expanduser('~')),
             'Pictures', 'BankSlips', 'incoming'
         ),
-        'processed_folder': os.path.join(
-            os.environ.get('USERPROFILE', os.path.expanduser('~')),
-            'Pictures', 'BankSlips', 'processed'
-        ),
-        'failed_folder': os.path.join(
-            os.environ.get('USERPROFILE', os.path.expanduser('~')),
-            'Pictures', 'BankSlips', 'failed'
-        ),
-        'auto_move_processed': True,
         'debounce_delay': 3.0,
         'enabled': is_bundled,  # Auto-enable batch processing in bundled installations
         'inference_timeout': 300
@@ -52,6 +43,13 @@ def load_config():
             with open(CONFIG_FILE, 'r') as f:
                 loaded_config = json.load(f)
                 logger.debug(f"Loaded batch config from {CONFIG_FILE}")
+                
+                # Ensure backward compatibility - add missing fields with defaults
+                defaults = get_default_config()
+                for key, value in defaults.items():
+                    if key not in loaded_config:
+                        loaded_config[key] = value
+                        logger.debug(f"Added missing config field: {key} = {value}")
                 
                 # Force enable batch processing in bundled installations
                 if is_bundled:

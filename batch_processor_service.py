@@ -54,6 +54,7 @@ class TransactionFileHandler(FileSystemEventHandler):
         self.config = config
         self.failed_count = 0
         self.success_count = 0
+        self.existing_files = set()  # Track files that existed before service started
         logger.info(f"TransactionFileHandler initialized with config: {config}")
     
     def on_created(self, event):
@@ -69,7 +70,12 @@ class TransactionFileHandler(FileSystemEventHandler):
             logger.debug(f"File ignored (not supported format): {event.src_path}")
             return
         
-        logger.info(f"🎯 SUPPORTED FILE DETECTED: {event.src_path}")
+        # Skip if this file existed before service started
+        if event.src_path in self.existing_files:
+            logger.info(f"⏭️ SKIPPING pre-existing file: {event.src_path}")
+            return
+        
+        logger.info(f"🎯 NEW FILE DETECTED: {event.src_path}")
         
         # Debounce: wait for file write to complete
         file_key = event.src_path
@@ -85,30 +91,6 @@ class TransactionFileHandler(FileSystemEventHandler):
         
         # Schedule processing after debounce delay
         logger.debug(f"Scheduling processing for {event.src_path} after {self.DEBOUNCE_DELAY}s")
-        time.sleep(self.DEBOUNCE_DELAY)
-        
-        self._process_file(event.src_path)
-    
-    def on_modified(self, event):
-        """Called when a file is modified - also trigger processing"""
-        if event.is_directory:
-            return
-        
-        if not self._is_supported_file(event.src_path):
-            return
-        
-        # Debounce check
-        file_key = event.src_path
-        current_time = time.time()
-        
-        if file_key in self.file_modified_times:
-            elapsed = current_time - self.file_modified_times[file_key]
-            if elapsed < self.DEBOUNCE_DELAY:
-                return
-        
-        self.file_modified_times[file_key] = current_time
-        
-        logger.debug(f"Scheduling processing for modified file {event.src_path}")
         time.sleep(self.DEBOUNCE_DELAY)
         
         self._process_file(event.src_path)
@@ -129,7 +111,7 @@ class TransactionFileHandler(FileSystemEventHandler):
             if not self._wait_for_file_ready(file_path):
                 logger.error(f"File never became ready: {file_path}")
                 self.failed_count += 1
-                self._move_to_failed(file_path, "File never became ready after retries")
+                logger.error(f"File kept in place (failed processing): {file_path}")
                 return
             
             file_name = os.path.basename(file_path)
@@ -145,7 +127,7 @@ class TransactionFileHandler(FileSystemEventHandler):
             if response is None:
                 logger.error(f"Inference failed for {file_name} (model returned None)")
                 self.failed_count += 1
-                self._move_to_failed(file_path, "Inference failed (model returned None)")
+                logger.error(f"File kept in place (failed inference): {file_path}")
                 return
             
             # Extract JSON from response
@@ -155,7 +137,7 @@ class TransactionFileHandler(FileSystemEventHandler):
             if not transaction_data or all(v == "Not Found" for v in transaction_data.values()):
                 logger.warning(f"No valid transaction data extracted from {file_name}")
                 self.failed_count += 1
-                self._move_to_failed(file_path, "No valid transaction data extracted")
+                logger.error(f"File kept in place (no valid data): {file_path}")
                 return
             
             # Add metadata
@@ -165,23 +147,18 @@ class TransactionFileHandler(FileSystemEventHandler):
             logger.debug(f"Saving transaction to database")
             db_manager.insert_record(transaction_data)
             
-            logger.info(f"Successfully processed: {file_name}")
+            logger.info(f"✅ Successfully processed: {file_name}")
             logger.debug(f"Extracted data: {transaction_data}")
             self.success_count += 1
             
-            # Move to processed folder if configured
-            if self.config.get('auto_move_processed', True):
-                self._move_to_processed(file_path)
-            else:
-                logger.debug(f"Auto-move disabled, keeping file in place: {file_path}")
+            # Files are kept in the incoming folder - no movement operations
+            logger.info(f"File kept in place: {file_path}")
         
         except Exception as e:
             logger.error(f"Error processing {file_path}: {str(e)}", exc_info=True)
             self.failed_count += 1
-            try:
-                self._move_to_failed(file_path, f"Processing error: {str(e)}")
-            except Exception as move_error:
-                logger.error(f"Failed to move file to failed folder: {move_error}")
+            # Log the error but don't move the file
+            logger.error(f"Processing failed for {file_path} - file kept in place for manual review")
     
     def _wait_for_file_ready(self, file_path, max_retries=5):
         """Wait for file to be fully written (size stable)"""
@@ -214,61 +191,6 @@ class TransactionFileHandler(FileSystemEventHandler):
         except Exception as e:
             logger.error(f"Error checking file readiness: {e}")
             return False
-    
-    def _move_to_processed(self, file_path):
-        """Move successfully processed file to processed folder"""
-        try:
-            processed_dir = self.config.get('processed_folder', None)
-            if not processed_dir:
-                logger.debug("Processed folder not configured, file stays in place")
-                return
-            
-            os.makedirs(processed_dir, exist_ok=True)
-            
-            file_name = os.path.basename(file_path)
-            dest_path = os.path.join(processed_dir, file_name)
-            
-            # Handle filename conflict
-            if os.path.exists(dest_path):
-                name, ext = os.path.splitext(file_name)
-                dest_path = os.path.join(processed_dir, f"{name}_{int(time.time())}{ext}")
-            
-            os.rename(file_path, dest_path)
-            logger.info(f"Moved to processed: {dest_path}")
-        
-        except Exception as e:
-            logger.error(f"Error moving file to processed folder: {e}")
-    
-    def _move_to_failed(self, file_path, reason):
-        """Move failed file to failed folder with error info"""
-        try:
-            failed_dir = self.config.get('failed_folder', None)
-            if not failed_dir:
-                logger.debug("Failed folder not configured")
-                return
-            
-            os.makedirs(failed_dir, exist_ok=True)
-            
-            file_name = os.path.basename(file_path)
-            dest_path = os.path.join(failed_dir, file_name)
-            
-            # Handle filename conflict
-            if os.path.exists(dest_path):
-                name, ext = os.path.splitext(file_name)
-                dest_path = os.path.join(failed_dir, f"{name}_{int(time.time())}{ext}")
-            
-            os.rename(file_path, dest_path)
-            
-            # Create error report file
-            report_path = dest_path + ".error"
-            with open(report_path, 'w') as f:
-                f.write(f"Processing Error: {reason}\n")
-                f.write(f"Timestamp: {datetime.now().isoformat()}\n")
-            
-            logger.info(f"Moved to failed: {dest_path}")
-        
-        except Exception as e:
-            logger.error(f"Error moving file to failed folder: {e}")
     
     def get_stats(self):
         """Return processing statistics"""
@@ -307,6 +229,9 @@ class BatchProcessorService:
             self.event_handler = TransactionFileHandler(self.config)
             logger.info("✅ Event handler initialized")
             
+            # Scan and mark all existing files as "already seen"
+            self._scan_existing_files(incoming_dir)
+            
             # Create and start observer
             self.observer = Observer()
             self.observer.schedule(self.event_handler, incoming_dir, recursive=False)
@@ -319,6 +244,22 @@ class BatchProcessorService:
         except Exception as e:
             logger.error(f"❌ Error starting batch processor: {e}", exc_info=True)
             return False
+    
+    def _scan_existing_files(self, folder_path):
+        """Scan existing files in folder and mark them as pre-existing"""
+        try:
+            count = 0
+            if os.path.isdir(folder_path):
+                for filename in os.listdir(folder_path):
+                    file_path = os.path.join(folder_path, filename)
+                    if os.path.isfile(file_path):
+                        # Mark all existing files as "already seen"
+                        self.event_handler.existing_files.add(file_path)
+                        count += 1
+                
+                logger.info(f"📊 Scanned existing files: {count} file(s) marked as pre-existing")
+        except Exception as e:
+            logger.warning(f"⚠️ Error scanning existing files: {e}")
     
     def stop(self):
         """Stop monitoring"""
