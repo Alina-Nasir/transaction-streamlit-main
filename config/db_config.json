@@ -1,0 +1,9 @@
+{
+    "type": "mssql",
+    "host": "localhost",
+    "port": 1433,
+    "database": "transactions_db",
+    "user": "",
+    "password": "",
+    "trusted_connection": true
+}

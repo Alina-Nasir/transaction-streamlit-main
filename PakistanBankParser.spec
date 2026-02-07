@@ -43,6 +43,8 @@ datas_with_metadata += [
     ('batch_config.py', '.'),
     ('run_batch_service.py', '.'),
     ('batch_processor_start.py', '.'),
+    ('validate_mysql.py', '.'),
+    ('validate_mssql.bat', '.'),
 ]
 
 a = Analysis(
@@ -114,6 +116,8 @@ a = Analysis(
         'toml',
         'typing_extensions',
         'importlib_metadata',
+        'pyodbc',
+        'openpyxl',
     ],
     hookspath=[],
     hooksconfig={},

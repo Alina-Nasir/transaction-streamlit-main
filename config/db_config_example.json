@@ -1,0 +1,8 @@
+{
+    "type": "mssql",
+    "host": "localhost",
+    "port": 1433,
+    "database": "transactions_db",
+    "user": "sa",
+    "password": "your_password_here"
+}

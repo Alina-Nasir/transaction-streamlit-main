@@ -668,10 +668,10 @@ def main():
                 st.rerun()
 
 def view_database():
-    """View all saved transactions from SQLite database with auto-refresh using Streamlit fragments"""
+    """View all saved transactions from database with auto-refresh using Streamlit fragments"""
     
-    # Initialize SQLite database
-    init_sqlite_db()
+    # Initialize database
+    db_manager.init_db()
     
     # Header (this stays static)
     col1, col2 = st.columns([0.95, 0.05])
@@ -710,12 +710,8 @@ def view_database():
     def display_data_fragment():
         """Fragment that auto-refreshes every 2 seconds"""
         try:
-            # Get database path
-            db_path = db_manager.get_db_path()
-            
-            # Connect to database
-            conn = sqlite3.connect(db_path)
-            conn.row_factory = sqlite3.Row
+            # Get database connection
+            conn, db_type = db_manager.get_connection()
             cursor = conn.cursor()
             
             # Get all transactions
@@ -727,9 +723,9 @@ def view_database():
                 conn.close()
                 return
             
-            # Convert to DataFrame
+            # Convert to DataFrame (compatible with MS SQL)
             columns = [description[0] for description in cursor.description]
-            df = pd.DataFrame([dict(row) for row in rows], columns=columns)
+            df = pd.DataFrame.from_records(rows, columns=columns)
             
             # Display summary metrics
             st.markdown("### 📈 Database Summary")
@@ -860,13 +856,25 @@ def view_database():
             db_info_col1, db_info_col2 = st.columns(2)
             
             with db_info_col1:
-                st.info(f"""
-                **Database Location:** 
-                `{db_path}`
-                
-                **Total Records:** {len(df)}
-                **Database Size:** {os.path.getsize(db_path) / 1024 / 1024:.2f} MB
-                """)
+                db_config = db_manager.get_db_config()
+                if db_config['type'] == 'mysql':
+                    st.info(f"""
+                    **Database Type:** MySQL
+                    **Host:** {db_config['host']}:{db_config['port']}
+                    **Database:** {db_config['database']}
+                    
+                    **Total Records:** {len(df)}
+                    """)
+                else:
+                    db_path = db_manager.get_db_path()
+                    st.info(f"""
+                    **Database Type:** SQLite
+                    **Database Location:** 
+                    `{db_path}`
+                    
+                    **Total Records:** {len(df)}
+                    **Database Size:** {os.path.getsize(db_path) / 1024 / 1024:.2f} MB
+                    """)
             
             with db_info_col2:
                 # Note: Button inside fragment can trigger fragment rerun, not full page rerun
