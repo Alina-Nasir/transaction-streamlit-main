@@ -98,7 +98,13 @@ class TransactionFileHandler(FileSystemEventHandler):
     def _is_supported_file(self, file_path):
         """Check if file is a supported image or PDF"""
         supported_extensions = ('.jpg', '.jpeg', '.png', '.pdf', '.JPG', '.JPEG', '.PNG', '.PDF')
-        return file_path.lower().endswith(supported_extensions)
+        is_supported = file_path.lower().endswith(supported_extensions)
+        
+        if not is_supported:
+            file_ext = os.path.splitext(file_path)[1].lower()
+            logger.debug(f"⚠️ Unsupported file type '{file_ext}' - only images (JPG, PNG) and PDFs are supported")
+        
+        return is_supported
     
     def _process_file(self, file_path):
         """Process a single transaction file"""
@@ -151,6 +157,9 @@ class TransactionFileHandler(FileSystemEventHandler):
             logger.debug(f"Extracted data: {transaction_data}")
             self.success_count += 1
             
+            # Write notification file to trigger Streamlit refresh
+            self._write_update_notification()
+            
             # Files are kept in the incoming folder - no movement operations
             logger.info(f"File kept in place: {file_path}")
         
@@ -191,6 +200,39 @@ class TransactionFileHandler(FileSystemEventHandler):
         except Exception as e:
             logger.error(f"Error checking file readiness: {e}")
             return False
+    
+    def _write_update_notification(self):
+        """Write a notification file to signal Streamlit to refresh
+        Uses atomic write (temp file + rename) to prevent race conditions"""
+        try:
+            notification_dir = os.path.join(
+                os.environ.get('APPDATA', os.path.expanduser('~')),
+                'PakistanBankParser', 'config'
+            )
+            os.makedirs(notification_dir, exist_ok=True)
+            
+            notification_file = os.path.join(notification_dir, '.db_updated')
+            
+            # Write atomically: write to temp file first, then rename
+            # This prevents readers from getting partial/corrupted timestamps
+            temp_file = notification_file + '.tmp'
+            try:
+                with open(temp_file, 'w') as f:
+                    f.write(str(time.time()))
+                # Atomic rename (on Windows, this replaces the old file)
+                os.replace(temp_file, notification_file)
+                logger.debug(f"✉️ Notification written: Database updated")
+            except Exception as e:
+                # Clean up temp file if rename failed
+                if os.path.exists(temp_file):
+                    try:
+                        os.remove(temp_file)
+                    except:
+                        pass
+                raise e
+                
+        except Exception as e:
+            logger.warning(f"⚠️ Could not write update notification: {e}")
     
     def get_stats(self):
         """Return processing statistics"""

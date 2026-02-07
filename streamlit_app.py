@@ -13,6 +13,8 @@ import requests
 import uuid
 import sqlite3
 import logging
+import time
+from queue import Queue
 
 # Import database manager for bundled mode compatibility
 import db_manager
@@ -187,6 +189,65 @@ def clean_amount(amount_str):
     except:
         return 0.0
     return 0.0
+
+def get_database_modification_time():
+    """Get the last modification time of the database file"""
+    try:
+        db_path = db_manager.get_db_path()
+        if os.path.exists(db_path):
+            return os.path.getmtime(db_path)
+    except Exception as e:
+        logger.debug(f"Error getting db modification time: {e}")
+    return 0
+
+def get_update_notification_time():
+    """Get the timestamp from the update notification file"""
+    try:
+        notification_file = os.path.join(
+            os.environ.get('APPDATA', os.path.expanduser('~')),
+            'PakistanBankParser', 'config', '.db_updated'
+        )
+        if os.path.exists(notification_file):
+            with open(notification_file, 'r') as f:
+                return float(f.read().strip())
+    except Exception as e:
+        logger.debug(f"Error reading update notification: {e}")
+    return 0
+
+def check_db_for_updates():
+    """Check if database has been updated and trigger rerun if needed"""
+    if 'last_update_check' not in st.session_state:
+        st.session_state.last_update_check = get_update_notification_time()
+        return False
+    
+    # Check for update notification (primary method - faster)
+    current_notification = get_update_notification_time()
+    if current_notification > st.session_state.last_update_check:
+        st.session_state.last_update_check = current_notification
+        logger.info("Database updated - triggering refresh")
+        return True
+    
+    # Fallback to database modification time check
+    try:
+        db_path = db_manager.get_db_path()
+        if os.path.exists(db_path):
+            current_modified = os.path.getmtime(db_path)
+            if 'last_db_modified' in st.session_state:
+                if current_modified > st.session_state.last_db_modified:
+                    st.session_state.last_db_modified = current_modified
+                    return True
+            else:
+                st.session_state.last_db_modified = current_modified
+    except Exception as e:
+        logger.debug(f"Error checking database modification: {e}")
+    
+    return False
+
+# NOTE: Removed background listener thread
+# REASON: Daemon threads cannot safely modify Streamlit's session_state (thread-local storage)
+# Thread-safety solution: Use Streamlit Fragments with run_every parameter
+# Fragments allow auto-refresh of specific sections while preserving user input state
+# This is the official Streamlit approach for auto-updating data without full page reruns
 
 def display_single_transaction(data):
     """Display single transaction data"""
@@ -607,213 +668,231 @@ def main():
                 st.rerun()
 
 def view_database():
-    """View all saved transactions from SQLite database"""
+    """View all saved transactions from SQLite database with auto-refresh using Streamlit fragments"""
     
     # Initialize SQLite database
     init_sqlite_db()
     
-    # Header
-    st.markdown('<div class="pakistan-flag">', unsafe_allow_html=True)
-    st.markdown('<h1 class="main-header">📊 Saved Transactions Database</h1>', unsafe_allow_html=True)
-    st.markdown("</div>", unsafe_allow_html=True)
+    # Header (this stays static)
+    col1, col2 = st.columns([0.95, 0.05])
+    with col2:
+        if st.button("🔄", help="Manually refresh data", key="manual_refresh"):
+            st.rerun()  # Trigger immediate refresh
     
-    st.markdown("View all transaction records saved in the database")
+    with col1:
+        st.markdown('<div class="pakistan-flag">', unsafe_allow_html=True)
+        st.markdown('<h1 class="main-header">📊 Saved Transactions Database</h1>', unsafe_allow_html=True)
+        st.markdown("</div>", unsafe_allow_html=True)
     
-    try:
-        # Get database path
-        db_path = db_manager.get_db_path()
-        
-        # Connect to database
-        conn = sqlite3.connect(db_path)
-        conn.row_factory = sqlite3.Row
-        cursor = conn.cursor()
-        
-        # Get all transactions
-        cursor.execute('SELECT * FROM transactions ORDER BY CreatedAt DESC')
-        rows = cursor.fetchall()
-        
-        if not rows:
-            st.info("📭 No transactions saved yet. Start processing slips to populate the database!")
-            conn.close()
-            return
-        
-        # Convert to DataFrame
-        columns = [description[0] for description in cursor.description]
-        df = pd.DataFrame([dict(row) for row in rows], columns=columns)
-        
-        # Display summary metrics
-        st.markdown("### 📈 Database Summary")
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            st.markdown('<div class="metric-card">', unsafe_allow_html=True)
-            st.metric("Total Records", len(df))
-            st.markdown('</div>', unsafe_allow_html=True)
-        
-        with col2:
-            st.markdown('<div class="metric-card">', unsafe_allow_html=True)
-            unique_banks = df['bankName'].nunique()
-            st.metric("Unique Banks", unique_banks)
-            st.markdown('</div>', unsafe_allow_html=True)
-        
-        # Filter and Search Section
-        st.markdown("### 🔍 Filter & Search")
-        
-        filter_col1, filter_col2, filter_col3 = st.columns(3)
-        
-        with filter_col1:
-            search_term = st.text_input("Search by bank name, account, or transaction ID", "")
-        
-        with filter_col2:
-            date_from = st.date_input("From Date", value=None)
-        
-        with filter_col3:
-            date_to = st.date_input("To Date", value=None)
-        
-        # Apply filters
-        filtered_df = df.copy()
-        
-        if search_term:
-            search_lower = search_term.lower()
-            filtered_df = filtered_df[
-                filtered_df.astype(str).apply(
-                    lambda x: x.str.contains(search_lower, case=False).any(), axis=1
-                )
-            ]
-        
-        if date_from:
-            try:
-                filtered_df = filtered_df[pd.to_datetime(filtered_df['Date'], format='%d/%m/%Y', errors='coerce') >= pd.Timestamp(date_from)]
-            except:
-                pass
-        
-        if date_to:
-            try:
-                filtered_df = filtered_df[pd.to_datetime(filtered_df['Date'], format='%d/%m/%Y', errors='coerce') <= pd.Timestamp(date_to)]
-            except:
-                pass
-        
-        st.markdown(f"**Showing {len(filtered_df)} of {len(df)} records**")
-        
-        # Data table view with all columns
-        st.markdown("### 📊 Transactions Table")
-        
-        # Create display dataframe
-        display_df = filtered_df.copy()
-        
-        # Reorder columns for better visibility
-        column_order = [
-            'bankName', 'Date', 'TransactionID', 'Amount', 
-            'FromAccount', 'FromAccountNumber', 'FromBankName',
-            'ToAccount', 'ToAccountNumber', 'ToBankName',
-            'Branch', 'PaymentMode', 'CustomerID', 'ChequeNo', 'Remarks'
-        ]
-        
-        existing_cols = [col for col in column_order if col in display_df.columns]
-        display_df = display_df[existing_cols]
-        
-        st.dataframe(
-            display_df,
-            use_container_width=True,
-            hide_index=True,
-            column_config={
-                "Amount": st.column_config.TextColumn(width="medium"),
-                "Remarks": st.column_config.TextColumn(width="large"),
-            }
-        )
-        
-        # Export section
-        st.markdown("---")
-        st.markdown("### 📥 Export Data")
-        
-        export_col1, export_col2, export_col3, export_col4 = st.columns(4)
-        
-        with export_col1:
-            # Export filtered as CSV
-            csv_data = filtered_df.to_csv(index=False, encoding='utf-8')
-            st.download_button(
-                label="Download Filtered as CSV",
-                data=csv_data,
-                file_name=f"transactions_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
-                mime="text/csv",
-                use_container_width=True
-            )
-        
-        with export_col2:
-            # Export all as CSV
-            csv_all_data = df.to_csv(index=False, encoding='utf-8')
-            st.download_button(
-                label="Download All as CSV",
-                data=csv_all_data,
-                file_name=f"all_transactions_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
-                mime="text/csv",
-                use_container_width=True
-            )
-        
-        with export_col3:
-            # Export filtered as Excel
-            output = io.BytesIO()
-            with pd.ExcelWriter(output, engine='openpyxl') as writer:
-                filtered_df.to_excel(writer, index=False, sheet_name='Transactions')
-            excel_data = output.getvalue()
-            st.download_button(
-                label="Download Filtered as Excel",
-                data=excel_data,
-                file_name=f"transactions_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                use_container_width=True
-            )
-        
-        with export_col4:
-            # Export all as Excel
-            output_all = io.BytesIO()
-            with pd.ExcelWriter(output_all, engine='openpyxl') as writer:
-                df.to_excel(writer, index=False, sheet_name='Transactions')
-            excel_all_data = output_all.getvalue()
-            st.download_button(
-                label="Download All as Excel",
-                data=excel_all_data,
-                file_name=f"all_transactions_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                use_container_width=True
-            )
-        
-        # Database management section
-        st.markdown("---")
-        st.markdown("### ⚙️ Database Management")
-        
-        db_info_col1, db_info_col2 = st.columns(2)
-        
-        with db_info_col1:
-            st.info(f"""
-            **Database Location:** 
-            `{db_path}`
+    st.markdown("View all transaction records saved in the database *(Auto-updates every 2 seconds)*")
+    st.info("✅ Auto-refresh active - data updates every 2 seconds. Your filters are preserved!")
+    
+    # Filter inputs (these stay outside the fragment to preserve user input)
+    st.markdown("### 🔍 Filter & Search")
+    filter_col1, filter_col2, filter_col3 = st.columns(3)
+    
+    with filter_col1:
+        search_term = st.text_input("Search by bank name, account, or transaction ID", "", key="search_filter")
+    
+    with filter_col2:
+        date_from = st.date_input("From Date", value=None, key="date_from_filter")
+    
+    with filter_col3:
+        date_to = st.date_input("To Date", value=None, key="date_to_filter")
+    
+    # Store filters in session state so fragment can access them
+    st.session_state.search_term = search_term
+    st.session_state.date_from = date_from
+    st.session_state.date_to = date_to
+    
+    # Auto-refreshing fragment for data display
+    @st.fragment(run_every="2s")
+    def display_data_fragment():
+        """Fragment that auto-refreshes every 2 seconds"""
+        try:
+            # Get database path
+            db_path = db_manager.get_db_path()
             
-            **Total Records:** {len(df)}
-            **Database Size:** {os.path.getsize(db_path) / 1024 / 1024:.2f} MB
-            """)
-        
-        with db_info_col2:
-            if st.button("🗑️ Delete All Records", type="secondary", use_container_width=True):
-                if st.session_state.get('confirm_delete', False):
-                    try:
-                        cursor.execute('DELETE FROM transactions')
-                        conn.commit()
-                        st.success("✅ All records deleted!")
-                        st.session_state.confirm_delete = False
-                        st.rerun()
-                    except Exception as e:
-                        st.error(f"Error deleting records: {e}")
-                else:
-                    st.session_state.confirm_delete = True
-                    st.warning("⚠️ Click again to confirm deletion of ALL records")
-        
-        conn.close()
-        
-    except Exception as e:
-        st.error(f"❌ Error accessing database: {str(e)}")
-        import traceback
-        st.error(traceback.format_exc())
+            # Connect to database
+            conn = sqlite3.connect(db_path)
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+            
+            # Get all transactions
+            cursor.execute('SELECT * FROM transactions ORDER BY CreatedAt DESC')
+            rows = cursor.fetchall()
+            
+            if not rows:
+                st.info("📭 No transactions saved yet. Start processing slips to populate the database!")
+                conn.close()
+                return
+            
+            # Convert to DataFrame
+            columns = [description[0] for description in cursor.description]
+            df = pd.DataFrame([dict(row) for row in rows], columns=columns)
+            
+            # Display summary metrics
+            st.markdown("### 📈 Database Summary")
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                st.markdown('<div class="metric-card">', unsafe_allow_html=True)
+                st.metric("Total Records", len(df))
+                st.markdown('</div>', unsafe_allow_html=True)
+            
+            with col2:
+                st.markdown('<div class="metric-card">', unsafe_allow_html=True)
+                unique_banks = df['bankName'].nunique()
+                st.metric("Unique Banks", unique_banks)
+                st.markdown('</div>', unsafe_allow_html=True)
+            
+            # Apply filters from session state
+            filtered_df = df.copy()
+            
+            search_term = st.session_state.get('search_term', '')
+            if search_term:
+                search_lower = search_term.lower()
+                filtered_df = filtered_df[
+                    filtered_df.astype(str).apply(
+                        lambda x: x.str.contains(search_lower, case=False).any(), axis=1
+                    )
+                ]
+            
+            date_from = st.session_state.get('date_from', None)
+            if date_from:
+                try:
+                    filtered_df = filtered_df[pd.to_datetime(filtered_df['Date'], format='%d/%m/%Y', errors='coerce') >= pd.Timestamp(date_from)]
+                except:
+                    pass
+            
+            date_to = st.session_state.get('date_to', None)
+            if date_to:
+                try:
+                    filtered_df = filtered_df[pd.to_datetime(filtered_df['Date'], format='%d/%m/%Y', errors='coerce') <= pd.Timestamp(date_to)]
+                except:
+                    pass
+            
+            st.markdown(f"**Showing {len(filtered_df)} of {len(df)} records**")
+            
+            # Data table view with all columns
+            st.markdown("### 📊 Transactions Table")
+            
+            # Create display dataframe
+            display_df = filtered_df.copy()
+            
+            # Reorder columns for better visibility
+            column_order = [
+                'bankName', 'Date', 'TransactionID', 'Amount', 
+                'FromAccount', 'FromAccountNumber', 'FromBankName',
+                'ToAccount', 'ToAccountNumber', 'ToBankName',
+                'Branch', 'PaymentMode', 'CustomerID', 'ChequeNo', 'Remarks'
+            ]
+            
+            existing_cols = [col for col in column_order if col in display_df.columns]
+            display_df = display_df[existing_cols]
+            
+            st.dataframe(
+                display_df,
+                use_container_width=True,
+                hide_index=True,
+                column_config={
+                    "Amount": st.column_config.TextColumn(width="medium"),
+                    "Remarks": st.column_config.TextColumn(width="large"),
+                }
+            )
+            
+            # Export section
+            st.markdown("---")
+            st.markdown("### 📥 Export Data")
+            
+            export_col1, export_col2, export_col3, export_col4 = st.columns(4)
+            
+            with export_col1:
+                csv_data = filtered_df.to_csv(index=False, encoding='utf-8')
+                st.download_button(
+                    label="Download Filtered as CSV",
+                    data=csv_data,
+                    file_name=f"transactions_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                    mime="text/csv",
+                    use_container_width=True
+                )
+            
+            with export_col2:
+                csv_all_data = df.to_csv(index=False, encoding='utf-8')
+                st.download_button(
+                    label="Download All as CSV",
+                    data=csv_all_data,
+                    file_name=f"all_transactions_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                    mime="text/csv",
+                    use_container_width=True
+                )
+            
+            with export_col3:
+                output = io.BytesIO()
+                with pd.ExcelWriter(output, engine='openpyxl') as writer:
+                    filtered_df.to_excel(writer, index=False, sheet_name='Transactions')
+                excel_data = output.getvalue()
+                st.download_button(
+                    label="Download Filtered as Excel",
+                    data=excel_data,
+                    file_name=f"transactions_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    use_container_width=True
+                )
+            
+            with export_col4:
+                output_all = io.BytesIO()
+                with pd.ExcelWriter(output_all, engine='openpyxl') as writer:
+                    df.to_excel(writer, index=False, sheet_name='Transactions')
+                excel_all_data = output_all.getvalue()
+                st.download_button(
+                    label="Download All as Excel",
+                    data=excel_all_data,
+                    file_name=f"all_transactions_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    use_container_width=True
+                )
+            
+            # Database management section
+            st.markdown("---")
+            st.markdown("### ⚙️ Database Management")
+            
+            db_info_col1, db_info_col2 = st.columns(2)
+            
+            with db_info_col1:
+                st.info(f"""
+                **Database Location:** 
+                `{db_path}`
+                
+                **Total Records:** {len(df)}
+                **Database Size:** {os.path.getsize(db_path) / 1024 / 1024:.2f} MB
+                """)
+            
+            with db_info_col2:
+                # Note: Button inside fragment can trigger fragment rerun, not full page rerun
+                if st.button("🗑️ Delete All Records", type="secondary", use_container_width=True, key="delete_all_btn"):
+                    if st.session_state.get('confirm_delete', False):
+                        try:
+                            cursor.execute('DELETE FROM transactions')
+                            conn.commit()
+                            st.success("✅ All records deleted!")
+                            st.session_state.confirm_delete = False
+                            # Trigger full page rerun to clear everything
+                            st.rerun(scope="app")
+                        except Exception as e:
+                            st.error(f"Error deleting records: {e}")
+                    else:
+                        st.session_state.confirm_delete = True
+                        st.warning("⚠️ Click again to confirm deletion of ALL records")
+            
+            conn.close()
+            
+        except Exception as e:
+            st.error(f"❌ Error accessing database: {str(e)}")
+            logger.error(f"Database error: {e}")
+    
+    # Call the auto-refreshing fragment
+    display_data_fragment()
 
 # Run the app
 if __name__ == "__main__":
