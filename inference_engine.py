@@ -43,18 +43,16 @@ Instructions:
 "TransactionID": "Ref No",
 "Amount": "Amount + Currency",
 "FromAccount": "Sender Name (Label: From/Debit)",
-"FromAccountNumber": "Sender Account # (Label: From/Debit). Write 'Not Found' if not present with the tag of from/Source or similar word.",
-"FromBankName": "Sender Bank",
-"ToAccount": "Receiver Name (Label: To/Credit)",
-"ToAccountNumber": "Receiver Account # (Label: To/Credit). Write 'Not Found' if not present with the tag of To/Destination or similar word.",
-"ToBankName": "Receiver Bank",
-"Branch": "Branch Name",
+"FromAccountNumber": "Sender Account # (Label: From/Debit/Transfer From). Writ not found if unsure. ",
+"ToAccount": "Receiver Name (Label: To/Credit ) (it can also be written as Account Name)",
+"ToAccountNumber": "Receiver Account # (Label: To/Credit or beneficiary/IBAN). Write 'Not Found' if not present with the tag of To/Destination or similar word.",
 "PaymentMode": "Cash/Online/Cheque",
 "CustomerID": "Consumer ID",
 "ChequeNo": "Cheque #",
-"Remarks": "Narration/Remarks"
 }
 
+Important Instructions:
+- Please ensure that if the from and to account numbers are present in the image, you must get them as they are critical and please ensure that do not get both the account no of sender and reciver same.The From account number can also be present with the tag of 'Transfer From'
 """
 
 
