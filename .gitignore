@@ -12,3 +12,5 @@ __pycache__/
 installer_output/
 llama-cpu/
 models_latest/
+testing_data/*
+comprehensive_images/*

@@ -149,6 +149,19 @@ class TransactionFileHandler(FileSystemEventHandler):
             # Add metadata
             transaction_data['FileName'] = file_name
             
+            # ACCOUNT NUMBER LOOKUP: Match ToAccountNumber to find ToBankName
+            to_account_num = transaction_data.get('ToAccountNumber', 'Not Found')
+            if to_account_num and to_account_num != 'Not Found':
+                matched_bank = db_manager.find_bank_by_account_number(to_account_num)
+                if matched_bank:
+                    transaction_data['ToBankName'] = matched_bank
+                    logger.info(f"🔍 Matched account {to_account_num} → {matched_bank}")
+                else:
+                    transaction_data['ToBankName'] = 'Not Found'
+                    logger.warning(f"⚠️ No bank match found for account: {to_account_num}")
+            else:
+                transaction_data['ToBankName'] = 'Not Found'
+            
             # Save to database
             logger.debug(f"Saving transaction to database")
             db_manager.insert_record(transaction_data)

@@ -38,7 +38,6 @@ Instructions:
 - If a field is empty in the image, strictly return "Not Found".
 
 {
-"bankName": "Logo Title",
 "Date": "DD/MM/YYYY",
 "TransactionID": "Ref No",
 "Amount": "Amount + Currency",
@@ -47,8 +46,6 @@ Instructions:
 "ToAccount": "Receiver Name (Label: To/Credit ) (it can also be written as Account Name)",
 "ToAccountNumber": "Receiver Account # (Label: To/Credit or beneficiary/IBAN). Write 'Not Found' if not present with the tag of To/Destination or similar word.",
 "PaymentMode": "Cash/Online/Cheque",
-"CustomerID": "Consumer ID",
-"ChequeNo": "Cheque #",
 }
 
 Important Instructions:
@@ -307,15 +304,9 @@ def _standardize_fields(data):
         'Amount': ['Amount', 'amount', 'Transaction Amount', 'AMOUNT', 'Actual Amount'],
         'ToAccount': ['ToAccount', 'toAccount', 'To Account', 'Beneficiary', 'Customer Name', 'Customer', 'Receiver Name'],
         'ToAccountNumber': ['ToAccountNumber', 'toAccountNumber', 'To Account Number', 'Beneficiary Account', 'Credit To', 'To A/C', 'Receiver Account'],
-        'ToBankName': ['ToBankName', 'toBankName', 'To Bank Name', 'Beneficiary Bank', 'Receiver Bank', 'Credit Bank'],
         'FromAccount': ['FromAccount', 'fromAccount', 'From Account', 'Sender', 'Payer', 'Sender Name'],
         'FromAccountNumber': ['FromAccountNumber', 'fromAccountNumber', 'From Account Number', 'Sender Account', 'Debit From', 'From A/C', 'Payer Account'],
-        'FromBankName': ['FromBankName', 'fromBankName', 'From Bank Name', 'Sender Bank', 'Payer Bank', 'Debit Bank'],
-        'Branch': ['Branch', 'branch', 'BRANCH'],
         'PaymentMode': ['PaymentMode', 'paymentMode', 'Payment Mode', 'Mode', 'PaymentMode'],
-        'CustomerID': ['CustomerID', 'customerID', 'Customer ID', 'Customer No'],
-        'ChequeNo': ['ChequeNo', 'chequeNo', 'Cheque No', 'Cheque Number', 'Actual Cheque No'],
-        'Remarks': ['Remarks', 'remarks', 'Note', 'Description']
     }
     
     for std_field, possible_names in field_mappings.items():
@@ -340,13 +331,7 @@ def _get_empty_response():
         "Amount": "Not Found",
         "ToAccount": "Not Found",
         "ToAccountNumber": "Not Found",
-        "ToBankName": "Not Found",
         "FromAccount": "Not Found",
         "FromAccountNumber": "Not Found",
-        "FromBankName": "Not Found",
-        "Branch": "Not Found",
-        "PaymentMode": "Not Found",
-        "CustomerID": "Not Found",
-        "ChequeNo": "Not Found",
-        "Remarks": "Not Found"
+        "PaymentMode": "Not Found"
     }

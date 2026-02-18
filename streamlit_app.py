@@ -561,7 +561,20 @@ def main():
                     st.markdown("### 🎯 Extracted Transaction")
                     display_single_transaction(extracted_data)
                     
-                    # Store to SQLite database in background (after display)
+                    # ACCOUNT NUMBER LOOKUP: Match ToAccountNumber to find ToBankName
+                    to_account_num = extracted_data.get('ToAccountNumber', 'Not Found')
+                    if to_account_num and to_account_num != 'Not Found':
+                        matched_bank = db_manager.find_bank_by_account_number(to_account_num)
+                        if matched_bank:
+                            extracted_data['ToBankName'] = matched_bank
+                            st.info(f"🔍 Matched account {to_account_num} → **{matched_bank}**")
+                        else:
+                            extracted_data['ToBankName'] = 'Not Found'
+                            st.warning(f"⚠️ No bank match found for account: {to_account_num}. Add it in 'Manage Banks' page.")
+                    else:
+                        extracted_data['ToBankName'] = 'Not Found'
+                    
+                    # Store to database (after display and account lookup)
                     try:
                         insert_transaction_to_db(extracted_data)
                     except Exception as e:
@@ -776,12 +789,12 @@ def view_database():
             # Create display dataframe
             display_df = filtered_df.copy()
             
-            # Reorder columns for better visibility
+            # Reorder columns for better visibility (only active fields)
             column_order = [
-                'bankName', 'Date', 'TransactionID', 'Amount', 
-                'FromAccount', 'FromAccountNumber', 'FromBankName',
+                'id', 'bankName', 'Date', 'TransactionID', 'Amount', 
+                'FromAccount', 'FromAccountNumber',
                 'ToAccount', 'ToAccountNumber', 'ToBankName',
-                'Branch', 'PaymentMode', 'CustomerID', 'ChequeNo', 'Remarks'
+                'PaymentMode', 'FileName', 'ProcessedDate', 'CreatedAt'
             ]
             
             existing_cols = [col for col in column_order if col in display_df.columns]
@@ -793,7 +806,7 @@ def view_database():
                 hide_index=True,
                 column_config={
                     "Amount": st.column_config.TextColumn(width="medium"),
-                    "Remarks": st.column_config.TextColumn(width="large"),
+                    "ToBankName": st.column_config.TextColumn(width="medium"),
                 }
             )
             
@@ -902,13 +915,157 @@ def view_database():
     # Call the auto-refreshing fragment
     display_data_fragment()
 
+
+# ---------- MANAGE BANKS PAGE ----------
+def manage_banks_page():
+    """Page for managing user's bank accounts"""
+    st.markdown('<div class="main-header"><h1>🏦 Manage Your Banks</h1></div>', unsafe_allow_html=True)
+    st.markdown("---")
+    
+    st.info("💡 Add your bank accounts here. When processing slips, the system will automatically match account numbers to identify the recipient bank.")
+    
+    # Add new bank form
+    st.subheader("➕ Add New Bank")
+    
+    with st.form("add_bank_form", clear_on_submit=True):
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            new_bank_name = st.text_input("Bank Name", placeholder="e.g., Meezan Bank", help="Enter the full bank name")
+        
+        with col2:
+            new_account_number = st.text_input("Account Number", placeholder="e.g., 01234567890123", help="Enter the full account number")
+        
+        submitted = st.form_submit_button("Add Bank", type="primary", use_container_width=True)
+        
+        if submitted:
+            if new_bank_name and new_account_number:
+                if db_manager.add_bank(new_bank_name, new_account_number):
+                    st.success(f"✅ Added: {new_bank_name} - {new_account_number}")
+                    st.rerun()
+                else:
+                    st.error("❌ Failed to add bank. Please try again.")
+            else:
+                st.warning("⚠️ Please fill in both bank name and account number.")
+    
+    st.markdown("---")
+    
+    # Display existing banks
+    st.subheader("📋 Your Banks")
+    
+    try:
+        banks = db_manager.get_all_banks()
+        
+        if banks:
+            # Convert to DataFrame for display
+            banks_data = []
+            for bank in banks:
+                banks_data.append({
+                    'ID': bank[0],
+                    'Bank Name': bank[1],
+                    'Account Number': bank[2],
+                    'Added On': bank[3].strftime('%Y-%m-%d %H:%M:%S') if hasattr(bank[3], 'strftime') else str(bank[3])
+                })
+            
+            df = pd.DataFrame(banks_data)
+            
+            # Display metrics
+            col1, col2 = st.columns(2)
+            with col1:
+                st.metric("Total Banks", len(banks))
+            with col2:
+                st.metric("Total Accounts", len(banks))
+            
+            st.markdown("###")
+            
+            # Display table with action buttons
+            for idx, bank in enumerate(banks_data):
+                with st.container():
+                    col1, col2, col3, col4, col5 = st.columns([1, 3, 3, 1, 1])
+                    
+                    with col1:
+                        st.write(f"**{bank['ID']}**")
+                    
+                    with col2:
+                        # Editable bank name
+                        if f"edit_mode_{bank['ID']}" in st.session_state and st.session_state[f"edit_mode_{bank['ID']}"]:
+                            edited_bank_name = st.text_input(
+                                "Bank Name",
+                                value=bank['Bank Name'],
+                                key=f"bank_name_{bank['ID']}",
+                                label_visibility="collapsed"
+                            )
+                        else:
+                            st.write(bank['Bank Name'])
+                    
+                    with col3:
+                        # Editable account number
+                        if f"edit_mode_{bank['ID']}" in st.session_state and st.session_state[f"edit_mode_{bank['ID']}"]:
+                            edited_account_number = st.text_input(
+                                "Account Number",
+                                value=bank['Account Number'],
+                                key=f"account_number_{bank['ID']}",
+                                label_visibility="collapsed"
+                            )
+                        else:
+                            st.write(bank['Account Number'])
+                    
+                    with col4:
+                        # Edit/Save button
+                        if f"edit_mode_{bank['ID']}" in st.session_state and st.session_state[f"edit_mode_{bank['ID']}"]:
+                            if st.button("💾", key=f"save_{bank['ID']}", help="Save changes"):
+                                edited_name = st.session_state[f"bank_name_{bank['ID']}"]
+                                edited_acc = st.session_state[f"account_number_{bank['ID']}"]
+                                if db_manager.update_bank(bank['ID'], edited_name, edited_acc):
+                                    st.success(f"✅ Updated bank {bank['ID']}")
+                                    st.session_state[f"edit_mode_{bank['ID']}"] = False
+                                    st.rerun()
+                                else:
+                                    st.error("❌ Failed to update")
+                        else:
+                            if st.button("✏️", key=f"edit_{bank['ID']}", help="Edit this bank"):
+                                st.session_state[f"edit_mode_{bank['ID']}"] = True
+                                st.rerun()
+                    
+                    with col5:
+                        # Delete button
+                        if st.button("🗑️", key=f"delete_{bank['ID']}", help="Delete this bank"):
+                            if db_manager.delete_bank(bank['ID']):
+                                st.success(f"✅ Deleted bank {bank['ID']}")
+                                st.rerun()
+                            else:
+                                st.error("❌ Failed to delete")
+                    
+                    st.markdown("---")
+            
+            # Export option
+            st.markdown("###")
+            col1, col2 = st.columns([1, 3])
+            with col1:
+                csv_data = df.to_csv(index=False)
+                st.download_button(
+                    label="📥 Export as CSV",
+                    data=csv_data,
+                    file_name=f"bank_accounts_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                    mime="text/csv",
+                    use_container_width=True
+                )
+        
+        else:
+            st.info("📭 No banks added yet. Add your first bank using the form above!")
+    
+    except Exception as e:
+        st.error(f"❌ Error loading banks: {str(e)}")
+        logger.error(f"Error in manage_banks_page: {e}", exc_info=True)
+
+
 # Run the app
 if __name__ == "__main__":
     # Create navigation
     st.sidebar.markdown("# Navigation")
     page = st.sidebar.radio(
         "Select Page",
-        ["Process Transactions", "View Database", "Auto Invocation Feature"],
+        ["Process Transactions", "View Database", "Manage Banks", "Auto Invocation Feature"],
         label_visibility="collapsed"
     )
     
@@ -916,5 +1073,7 @@ if __name__ == "__main__":
         main()
     elif page == "View Database":
         view_database()
+    elif page == "Manage Banks":
+        manage_banks_page()
     else:
         batch_settings_page()
