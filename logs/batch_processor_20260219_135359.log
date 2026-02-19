@@ -1,0 +1,77 @@
+2026-02-19 13:53:59,674 - __main__ - INFO - ================================================================================
+2026-02-19 13:53:59,674 - __main__ - INFO - SETUP: Creating test environment
+2026-02-19 13:53:59,674 - __main__ - INFO - ================================================================================
+2026-02-19 13:53:59,677 - __main__ - INFO - 
+================================================================================
+2026-02-19 13:53:59,677 - __main__ - INFO - STARTING COMPREHENSIVE RESTART RECOVERY TESTS
+2026-02-19 13:53:59,677 - __main__ - INFO - ================================================================================
+2026-02-19 13:53:59,677 - __main__ - INFO - 
+================================================================================
+2026-02-19 13:53:59,677 - __main__ - INFO - TEST 1: Basic Processed File Tracking
+2026-02-19 13:53:59,677 - __main__ - INFO - ================================================================================
+2026-02-19 13:53:59,680 - batch_processor_service - INFO - TransactionFileHandler initialized with 3 worker threads
+2026-02-19 13:53:59,681 - batch_processor_service - INFO - Failed files log: D:\Machine Learning\JFF JOB\transaction-streamlit-main\logs\failed_files.json
+2026-02-19 13:53:59,681 - batch_processor_service - INFO - Processed files log: D:\Machine Learning\JFF JOB\transaction-streamlit-main\logs\processed_files.json (auto-cleanup every 24h)
+2026-02-19 13:53:59,681 - batch_processor_service - INFO - Loaded 0 previously processed files from log
+2026-02-19 13:53:59,711 - batch_processor_service - INFO - Shutting down worker threads...
+2026-02-19 13:54:04,698 - batch_processor_service - INFO - All worker threads stopped
+2026-02-19 13:54:05,209 - __main__ - INFO - 
+================================================================================
+2026-02-19 13:54:05,209 - __main__ - INFO - TEST 2: Skip Already Processed Files
+2026-02-19 13:54:05,209 - __main__ - INFO - ================================================================================
+2026-02-19 13:54:05,214 - batch_processor_service - INFO - TransactionFileHandler initialized with 3 worker threads
+2026-02-19 13:54:05,216 - batch_processor_service - INFO - Failed files log: D:\Machine Learning\JFF JOB\transaction-streamlit-main\logs\failed_files.json
+2026-02-19 13:54:05,216 - batch_processor_service - INFO - Processed files log: D:\Machine Learning\JFF JOB\transaction-streamlit-main\logs\processed_files.json (auto-cleanup every 24h)
+2026-02-19 13:54:05,216 - batch_processor_service - INFO - Loaded 0 previously processed files from log
+2026-02-19 13:54:05,228 - batch_processor_service - INFO - Shutting down worker threads...
+2026-02-19 13:54:10,223 - batch_processor_service - INFO - All worker threads stopped
+2026-02-19 13:54:10,738 - __main__ - INFO - 
+================================================================================
+2026-02-19 13:54:10,738 - __main__ - INFO - TEST 3: Startup Scan Processes Unprocessed Files Only
+2026-02-19 13:54:10,738 - __main__ - INFO - ================================================================================
+2026-02-19 13:54:10,740 - __main__ - INFO - ================================================================================
+2026-02-19 13:54:10,740 - __main__ - INFO - SETUP: Creating test environment
+2026-02-19 13:54:10,740 - __main__ - INFO - ================================================================================
+2026-02-19 13:54:10,760 - batch_processor_service - INFO - TransactionFileHandler initialized with 3 worker threads
+2026-02-19 13:54:10,761 - batch_processor_service - INFO - Failed files log: D:\Machine Learning\JFF JOB\transaction-streamlit-main\logs\failed_files.json
+2026-02-19 13:54:10,762 - batch_processor_service - INFO - Processed files log: D:\Machine Learning\JFF JOB\transaction-streamlit-main\logs\processed_files.json (auto-cleanup every 24h)
+2026-02-19 13:54:10,762 - batch_processor_service - INFO - Loaded 0 previously processed files from log
+2026-02-19 13:54:10,774 - batch_processor_service - INFO - Shutting down worker threads...
+2026-02-19 13:54:15,775 - batch_processor_service - INFO - All worker threads stopped
+2026-02-19 13:54:16,285 - __main__ - INFO - 
+================================================================================
+2026-02-19 13:54:16,285 - __main__ - INFO - TEST 4: Log Cleanup Removes Old Entries
+2026-02-19 13:54:16,285 - __main__ - INFO - ================================================================================
+2026-02-19 13:54:16,290 - __main__ - INFO - ================================================================================
+2026-02-19 13:54:16,290 - __main__ - INFO - SETUP: Creating test environment
+2026-02-19 13:54:16,290 - __main__ - INFO - ================================================================================
+2026-02-19 13:54:16,294 - batch_processor_service - INFO - TransactionFileHandler initialized with 3 worker threads
+2026-02-19 13:54:16,295 - batch_processor_service - INFO - Failed files log: D:\Machine Learning\JFF JOB\transaction-streamlit-main\logs\failed_files.json
+2026-02-19 13:54:16,295 - batch_processor_service - INFO - Processed files log: D:\Machine Learning\JFF JOB\transaction-streamlit-main\logs\processed_files.json (auto-cleanup every 24h)
+2026-02-19 13:54:16,295 - batch_processor_service - INFO - Loaded 0 previously processed files from log
+2026-02-19 13:54:16,348 - batch_processor_service - INFO - Shutting down worker threads...
+2026-02-19 13:54:21,301 - batch_processor_service - INFO - All worker threads stopped
+2026-02-19 13:54:21,811 - __main__ - INFO - 
+================================================================================
+2026-02-19 13:54:21,811 - __main__ - INFO - TEST 5: Power Failure Scenario (Real-World Simulation)
+2026-02-19 13:54:21,811 - __main__ - INFO - ================================================================================
+2026-02-19 13:54:21,812 - __main__ - INFO - ================================================================================
+2026-02-19 13:54:21,812 - __main__ - INFO - SETUP: Creating test environment
+2026-02-19 13:54:21,813 - __main__ - INFO - ================================================================================
+2026-02-19 13:54:21,827 - batch_processor_service - INFO - TransactionFileHandler initialized with 3 worker threads
+2026-02-19 13:54:21,828 - batch_processor_service - INFO - Failed files log: D:\Machine Learning\JFF JOB\transaction-streamlit-main\logs\failed_files.json
+2026-02-19 13:54:21,828 - batch_processor_service - INFO - Processed files log: D:\Machine Learning\JFF JOB\transaction-streamlit-main\logs\processed_files.json (auto-cleanup every 24h)
+2026-02-19 13:54:21,828 - batch_processor_service - INFO - Loaded 0 previously processed files from log
+2026-02-19 13:54:21,858 - batch_processor_service - INFO - Shutting down worker threads...
+2026-02-19 13:54:26,837 - batch_processor_service - INFO - All worker threads stopped
+2026-02-19 13:54:27,864 - batch_processor_service - INFO - TransactionFileHandler initialized with 3 worker threads
+2026-02-19 13:54:27,866 - batch_processor_service - INFO - Failed files log: D:\Machine Learning\JFF JOB\transaction-streamlit-main\logs\failed_files.json
+2026-02-19 13:54:27,866 - batch_processor_service - INFO - Processed files log: D:\Machine Learning\JFF JOB\transaction-streamlit-main\logs\processed_files.json (auto-cleanup every 24h)
+2026-02-19 13:54:27,866 - batch_processor_service - INFO - Loaded 0 previously processed files from log
+2026-02-19 13:54:27,880 - batch_processor_service - INFO - Shutting down worker threads...
+2026-02-19 13:54:32,882 - batch_processor_service - INFO - All worker threads stopped
+2026-02-19 13:54:33,392 - __main__ - INFO - 
+================================================================================
+2026-02-19 13:54:33,393 - __main__ - INFO - ================================================================================
+2026-02-19 13:54:33,393 - __main__ - INFO - Restart recovery feature is working correctly:
+2026-02-19 13:54:33,408 - __main__ - INFO - ================================================================================
