@@ -12,8 +12,10 @@ import traceback
 import queue
 import threading
 import json
+import shutil
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timezone
+import pytz
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
 import db_manager
@@ -77,17 +79,21 @@ class TransactionFileHandler(FileSystemEventHandler):
         # Failed files tracking
         self.failed_files_log = self._get_failed_files_log_path()
         
-        # Processed files tracking (for restart recovery)
+        # TTL-based processed files tracking (4-day retention)
         self.processed_files_log = self._get_processed_files_log_path()
-        self.processed_files = self._load_processed_files()
+        self.processed_files_dict = self._load_processed_files_ttl()
         
         # Worker threads
         self.workers = []
         self.shutdown_event = threading.Event()
         
-        # Periodic cleanup timer (runs every 24 hours)
-        self.last_cleanup_time = time.time()
-        self.cleanup_interval = 24 * 60 * 60  # 24 hours in seconds
+        # TTL cleanup scheduler (runs daily at 3 AM Pakistan time)
+        self.cleanup_thread = threading.Thread(
+            target=self._ttl_cleanup_scheduler,
+            name="TTL-Cleanup-Scheduler",
+            daemon=True
+        )
+        self.cleanup_thread.start()
         
         # Start worker threads
         for i in range(self.NUM_WORKER_THREADS):
@@ -101,139 +107,188 @@ class TransactionFileHandler(FileSystemEventHandler):
         
         logger.info(f"TransactionFileHandler initialized with {self.NUM_WORKER_THREADS} worker threads")
         logger.info(f"Failed files log: {self.failed_files_log}")
-        logger.info(f"Processed files log: {self.processed_files_log} (auto-cleanup every 24h)")
-        logger.info(f"Loaded {len(self.processed_files)} previously processed files from log")
+        logger.info(f"Processed files log (TTL): {self.processed_files_log} (4-day retention, cleanup at 3 AM PKT)")
+        logger.info(f"Loaded {len(self.processed_files_dict)} previously processed files from TTL tracker")
     
     def _get_processed_files_log_path(self):
-        """Get path for processed files tracking JSON"""
+        """Get path for TTL-based processed files tracking JSON"""
         log_dir = db_manager.get_log_dir()
-        return os.path.join(log_dir, 'processed_files.json')
+        return os.path.join(log_dir, 'processed.json')
     
-    def _load_processed_files(self):
-        """Load set of previously processed filenames and clean old entries (>30 days)"""
+    def _load_processed_files_ttl(self):
+        """Load TTL-based processed files dictionary with resilient error handling"""
         try:
             if os.path.exists(self.processed_files_log):
-                with open(self.processed_files_log, 'r') as f:
+                with open(self.processed_files_log, 'r', encoding='utf-8') as f:
                     data = json.load(f)
                 
-                # Filter: keep only entries from last 30 days
-                cutoff_time = datetime.now().timestamp() - (30 * 24 * 60 * 60)
-                recent_entries = []
+                # Validate format: should be dict with filename: timestamp
+                if not isinstance(data, dict):
+                    logger.warning(f"Invalid format in {self.processed_files_log}, expected dict, got {type(data).__name__}")
+                    self._backup_and_reset_processed_log("invalid_format")
+                    return {}
                 
-                for entry in data:
-                    try:
-                        # Parse timestamp
-                        processed_at = datetime.fromisoformat(entry['processed_at']).timestamp()
-                        if processed_at > cutoff_time:
-                            recent_entries.append(entry)
-                    except:
-                        # If timestamp parsing fails, keep the entry (safer)
-                        recent_entries.append(entry)
-                
-                # If we filtered old entries, save the cleaned version
-                if len(recent_entries) < len(data):
-                    removed_count = len(data) - len(recent_entries)
-                    logger.info(f"🧹 Cleaned {removed_count} old entries (>30 days) from processed files log")
-                    with open(self.processed_files_log, 'w') as f:
-                        json.dump(recent_entries, f, indent=2)
-                
-                # Return set of filenames
-                processed = set(entry['filename'] for entry in recent_entries)
-                logger.info(f"📂 Loaded {len(processed)} processed files from log (last 30 days)")
-                return processed
+                logger.info(f"📂 Loaded {len(data)} processed files from TTL tracker")
+                return data
             else:
-                logger.info(f"📂 No processed files log found - starting fresh")
-                return set()
+                logger.info(f"📂 No processed files log found - creating fresh TTL tracker")
+                # Create empty file
+                with open(self.processed_files_log, 'w', encoding='utf-8') as f:
+                    json.dump({}, f, indent=2)
+                return {}
+        except json.JSONDecodeError as e:
+            logger.error(f"JSON decode error in {self.processed_files_log}: {e}")
+            self._backup_and_reset_processed_log("json_decode_error")
+            return {}
         except Exception as e:
-            logger.error(f"Error loading processed files log: {e}")
-            return set()
+            logger.error(f"Error loading processed files TTL tracker: {e}")
+            return {}
+    
+    def _backup_and_reset_processed_log(self, reason):
+        """Backup corrupted processed.json and start fresh"""
+        try:
+            if os.path.exists(self.processed_files_log):
+                backup_name = f"processed_corrupted_{reason}_{int(time.time())}.json.bak"
+                backup_path = os.path.join(os.path.dirname(self.processed_files_log), backup_name)
+                shutil.copy2(self.processed_files_log, backup_path)
+                logger.warning(f"⚠️ Backed up corrupted file to: {backup_path}")
+            
+            # Create fresh empty file
+            with open(self.processed_files_log, 'w', encoding='utf-8') as f:
+                json.dump({}, f, indent=2)
+            logger.info(f"✅ Reset processed.json with empty tracker")
+        except Exception as e:
+            logger.error(f"Error backing up corrupted file: {e}")
     
     def _mark_file_processed(self, file_path):
-        """Mark a file as successfully processed (thread-safe)"""
+        """Mark file as processed in TTL tracker (thread-safe)"""
         try:
             filename = os.path.basename(file_path)
-            
-            with self.lock:
-                # Add to in-memory set
-                self.processed_files.add(filename)
-            
-            # Periodic cleanup check (every 24 hours)
-            current_time = time.time()
-            if current_time - self.last_cleanup_time > self.cleanup_interval:
-                logger.info("⏰ 24 hours elapsed - triggering cleanup of old processed files")
-                self._cleanup_old_processed_files()
-                self.last_cleanup_time = current_time
+            current_timestamp = int(time.time())  # Unix timestamp in seconds
             
             # CRITICAL: Lock the entire JSON read-modify-write operation
             # to prevent race conditions between worker threads
             with self.lock:
-                # Load existing log
-                if os.path.exists(self.processed_files_log):
-                    with open(self.processed_files_log, 'r') as f:
-                        processed_log = json.load(f)
-                else:
-                    processed_log = []
+                # Add to in-memory dictionary immediately
+                self.processed_files_dict[filename] = current_timestamp
                 
-                # Add new entry
-                processed_log.append({
-                    'filename': filename,
-                    'processed_at': datetime.now().isoformat(),
-                    'full_path': file_path
-                })
-                
-                # Write back atomically
-                with open(self.processed_files_log, 'w') as f:
-                    json.dump(processed_log, f, indent=2)
-            
-            logger.debug(f"✅ Marked as processed: {filename}")
+                # Load existing tracker
+                try:
+                    if os.path.exists(self.processed_files_log):
+                        with open(self.processed_files_log, 'r', encoding='utf-8') as f:
+                            processed_dict = json.load(f)
+                    else:
+                        processed_dict = {}
+                    
+                    # Add/update entry with current timestamp
+                    processed_dict[filename] = current_timestamp
+                    
+                    # Write back atomically (within lock)
+                    with open(self.processed_files_log, 'w', encoding='utf-8') as f:
+                        json.dump(processed_dict, f, indent=2)
+                    
+                    logger.debug(f"✅ Marked as processed: {filename} (TTL: {current_timestamp})")
+                except json.JSONDecodeError as e:
+                    logger.error(f"JSON error while marking file: {e}")
+                    self._backup_and_reset_processed_log("write_error")
+                    # Still update with new entry
+                    with open(self.processed_files_log, 'w', encoding='utf-8') as f:
+                        json.dump({filename: current_timestamp}, f, indent=2)
         except Exception as e:
             logger.error(f"Error marking file as processed: {e}")
-            # Even if JSON write fails, file is still in in-memory set
+            # Even if JSON write fails, file is still in in-memory dict
             # This prevents loss - file won't be reprocessed in current session
     
     def _is_already_processed(self, file_path):
-        """Check if file was already processed (thread-safe)"""
+        """Check if file was already processed using TTL tracker (thread-safe)"""
         filename = os.path.basename(file_path)
         with self.lock:
-            return filename in self.processed_files
+            return filename in self.processed_files_dict
     
-    def _cleanup_old_processed_files(self):
-        """Remove entries older than 30 days from processed files log"""
-        try:
-            if not os.path.exists(self.processed_files_log):
-                return
-            
-            with open(self.processed_files_log, 'r') as f:
-                data = json.load(f)
-            
-            # Filter: keep only entries from last 30 days
-            cutoff_time = datetime.now().timestamp() - (30 * 24 * 60 * 60)
-            recent_entries = []
-            
-            for entry in data:
-                try:
-                    processed_at = datetime.fromisoformat(entry['processed_at']).timestamp()
-                    if processed_at > cutoff_time:
-                        recent_entries.append(entry)
-                except:
-                    recent_entries.append(entry)  # Keep if timestamp parsing fails
-            
-            removed_count = len(data) - len(recent_entries)
-            if removed_count > 0:
-                logger.info(f"🧹 Cleanup: Removed {removed_count} old entries (>30 days), kept {len(recent_entries)}")
+    def _ttl_cleanup_scheduler(self):
+        """Background thread that runs TTL cleanup daily at 3 AM Pakistan time"""
+        pkt = pytz.timezone('Asia/Karachi')
+        
+        while not self.shutdown_event.is_set():
+            try:
+                # Get current time in Pakistan timezone
+                now_pkt = datetime.now(pkt)
                 
-                # Update in-memory set
-                with self.lock:
-                    self.processed_files = set(entry['filename'] for entry in recent_entries)
+                # Calculate next 3 AM
+                next_cleanup = now_pkt.replace(hour=3, minute=0, second=0, microsecond=0)
+                
+                # If we've passed 3 AM today, schedule for tomorrow
+                if now_pkt >= next_cleanup:
+                    next_cleanup = next_cleanup.replace(day=next_cleanup.day + 1)
+                
+                # Calculate sleep duration
+                sleep_seconds = (next_cleanup - now_pkt).total_seconds()
+                
+                logger.info(f"⏰ Next TTL cleanup scheduled for: {next_cleanup.strftime('%Y-%m-%d %H:%M:%S %Z')} (in {sleep_seconds/3600:.1f} hours)")
+                
+                # Sleep until next cleanup time (check every hour if shutdown requested)
+                for _ in range(int(sleep_seconds / 3600) + 1):
+                    if self.shutdown_event.wait(timeout=3600):  # 1 hour
+                        logger.info("TTL cleanup scheduler shutting down")
+                        return
+                
+                # Run cleanup
+                self._cleanup_ttl_entries()
+                
+            except Exception as e:
+                logger.error(f"Error in TTL cleanup scheduler: {e}")
+                # Sleep 1 hour before retry
+                self.shutdown_event.wait(timeout=3600)
+    
+    def _cleanup_ttl_entries(self):
+        """Remove entries older than 4 days (345600 seconds) from processed.json"""
+        try:
+            logger.info("🧹 Starting TTL cleanup (4-day retention)...")
+            
+            current_time = int(time.time())
+            ttl_threshold = 345600  # 4 days in seconds
+            
+            with self.lock:
+                if not os.path.exists(self.processed_files_log):
+                    logger.info("No processed.json found, nothing to cleanup")
+                    return
+                
+                # Load current data
+                try:
+                    with open(self.processed_files_log, 'r', encoding='utf-8') as f:
+                        data = json.load(f)
+                except json.JSONDecodeError as e:
+                    logger.error(f"JSON decode error during cleanup: {e}")
+                    self._backup_and_reset_processed_log("cleanup_decode_error")
+                    return
+                
+                # Filter: keep only entries within 4-day TTL
+                cleaned_dict = {}
+                removed_count = 0
+                
+                for filename, timestamp in data.items():
+                    try:
+                        age_seconds = current_time - int(timestamp)
+                        if age_seconds <= ttl_threshold:
+                            cleaned_dict[filename] = timestamp
+                        else:
+                            removed_count += 1
+                            logger.debug(f"Removing expired entry: {filename} (age: {age_seconds/86400:.1f} days)")
+                    except (ValueError, TypeError) as e:
+                        logger.warning(f"Invalid timestamp for {filename}: {timestamp}, removing entry")
+                        removed_count += 1
+                
+                # Update in-memory dictionary
+                self.processed_files_dict = cleaned_dict
                 
                 # Save cleaned version
-                with open(self.processed_files_log, 'w') as f:
-                    json.dump(recent_entries, f, indent=2)
-            else:
-                logger.info(f"🧹 Cleanup: No old entries to remove (all {len(data)} entries within 30 days)")
-        
+                with open(self.processed_files_log, 'w', encoding='utf-8') as f:
+                    json.dump(cleaned_dict, f, indent=2)
+                
+                logger.info(f"🧹 TTL cleanup complete: Removed {removed_count} expired entries (>4 days), kept {len(cleaned_dict)} entries")
+                
         except Exception as e:
-            logger.error(f"Error during cleanup of processed files: {e}")
+            logger.error(f"Error during TTL cleanup: {e}", exc_info=True)
     
     def _get_failed_files_log_path(self):
         """Get path for failed files tracking JSON"""
@@ -622,30 +677,14 @@ class BatchProcessorService:
                         skipped_count += 1
                         logger.debug(f"⏭️ Skipping already processed: {filename}")
                     else:
-                        # Not in JSON - but could be old file that was cleaned up
-                        # Check file age: if >30 days old, assume it was already processed
-                        try:
-                            file_mtime = os.path.getmtime(file_path)
-                            file_age_days = (time.time() - file_mtime) / (24 * 60 * 60)
-                            
-                            if file_age_days > 30:
-                                # File is old (>30 days) - must have been processed before
-                                # Skip it to prevent re-processing
-                                with self.event_handler.lock:
-                                    self.event_handler.existing_files.add(file_path)
-                                skipped_count += 1
-                                logger.info(f"⏭️ Skipping old file (>{int(file_age_days)} days): {filename}")
-                            else:
-                                # File is recent (<30 days) and not in JSON - NEW FILE!
-                                # Queue it for processing
-                                self.event_handler.work_queue.put(file_path)
-                                new_files_count += 1
-                                logger.info(f"📥 QUEUED unprocessed file from restart: {filename}")
-                        except Exception as e:
-                            # If we can't get file time, queue it to be safe
-                            logger.warning(f"⚠️ Could not check age of {filename}, queueing: {e}")
-                            self.event_handler.work_queue.put(file_path)
-                            new_files_count += 1
+                        # Not in JSON - NEW FILE! Queue it for processing
+                        # NOTE: We do NOT check file modification time here because:
+                        # - Copying files preserves original mtime (unreliable)
+                        # - JSON cleanup already handles old entries (30-day limit)
+                        # - If file not in JSON, it hasn't been processed
+                        self.event_handler.work_queue.put(file_path)
+                        new_files_count += 1
+                        logger.info(f"📥 QUEUED unprocessed file from restart: {filename}")
                 
                 logger.info(f"📊 Scan complete: {skipped_count} already processed, {new_files_count} queued for processing")
         except Exception as e:

@@ -108,6 +108,8 @@ a = Analysis(
         'watchdog.observers',
         'watchdog.events',
         'watchdog.observers.polling',
+        'pytz',
+        'pytz.tzfile',
         'validators',
         'packaging',
         'packaging.version',

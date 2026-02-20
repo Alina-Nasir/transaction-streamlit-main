@@ -426,9 +426,9 @@ class TestRestartRecovery:
         handler2.shutdown()
     
     def test_old_file_not_reprocessed(self):
-        """Test 6: Old files (>30 days) are never re-processed even if not in JSON"""
+        """Test 6: Verify JSON cleanup removes old entries (prevents unbounded growth)"""
         logger.info("\n" + "=" * 80)
-        logger.info("TEST 6: Old Files Not Re-Processed After JSON Cleanup")
+        logger.info("TEST 6: JSON Cleanup Prevents Unbounded Growth")
         logger.info("=" * 80)
         
         # Create fresh test environment for this test
@@ -437,58 +437,45 @@ class TestRestartRecovery:
         
         handler = batch_processor_service.TransactionFileHandler({'incoming_folder': self.incoming_dir})
         handler.processed_files_log = self.processed_log
-        handler.processed_files = handler._load_processed_files()  # Reload from test log
         
-        # Create an old file (35 days old) - simulates a file that was processed long ago
+        # Create entries with different ages (based on processed_at timestamp)
+        # This tests that JSON cleanup works based on TIMESTAMP, not file modification time
         old_time = datetime.now() - timedelta(days=35)
-        old_file = self.create_test_file('very_old_slip.jpg', old_time)
-        
-        logger.info(f"📄 Created old file (35 days): very_old_slip.jpg")
-        
-        # Create a recent file (5 days old) - not in JSON, should be processed
         recent_time = datetime.now() - timedelta(days=5)
-        recent_file = self.create_test_file('recent_slip.jpg', recent_time)
         
-        logger.info(f"📄 Created recent file (5 days): recent_slip.jpg")
+        # Mark files as processed with different timestamps
+        self.mark_as_processed('old_file_1.jpg', old_time)
+        self.mark_as_processed('old_file_2.jpg', old_time)
+        self.mark_as_processed('recent_file_1.jpg', recent_time)
+        self.mark_as_processed('recent_file_2.jpg', recent_time)
         
-        # Simulate restart: scan folder like _scan_existing_files does
-        all_files = os.listdir(self.incoming_dir)
-        to_skip = []
-        to_process = []
+        logger.info(f"📄 Created 2 old entries (35 days ago in JSON)")
+        logger.info(f"📄 Created 2 recent entries (5 days ago in JSON)")
         
-        for filename in all_files:
-            filepath = os.path.join(self.incoming_dir, filename)
-            
-            # Check if in JSON
-            if handler._is_already_processed(filepath):
-                to_skip.append((filename, "in JSON"))
-            else:
-                # Not in JSON - check file age
-                file_mtime = os.path.getmtime(filepath)
-                file_age_days = (time.time() - file_mtime) / (24 * 60 * 60)
-                
-                if file_age_days > 30:
-                    to_skip.append((filename, f"old file ({int(file_age_days)} days)"))
-                else:
-                    to_process.append((filename, f"recent ({int(file_age_days)} days)"))
+        # Check count before cleanup
+        entries_before = self.get_processed_files_from_log()
+        logger.info(f"📊 Entries before cleanup: {len(entries_before)}")
         
-        logger.info(f"📊 Files to skip: {len(to_skip)}")
-        for fname, reason in to_skip:
-            logger.info(f"  ⏭️ {fname} - {reason}")
+        # Load and cleanup (happens automatically in _load_processed_files)
+        handler.processed_files = handler._load_processed_files()
         
-        logger.info(f"📊 Files to process: {len(to_process)}")
-        for fname, reason in to_process:
-            logger.info(f"  ✅ {fname} - {reason}")
+        # Check count after cleanup
+        entries_after = self.get_processed_files_from_log()
+        logger.info(f"📊 Entries after cleanup: {len(entries_after)}")
         
-        # Verify: old file should be skipped
-        assert any('very_old_slip.jpg' in item[0] for item in to_skip), "Old file should be skipped!"
+        filenames_after = [entry['filename'] for entry in entries_after]
         
-        # Verify: recent file should be processed
-        assert any('recent_slip.jpg' in item[0] for item in to_process), "Recent file should be processed!"
+        # Verify old entries removed, recent kept
+        assert len(entries_after) == 2, f"Expected 2 entries after cleanup, got {len(entries_after)}"
+        assert 'recent_file_1.jpg' in filenames_after, "Recent file should be kept"
+        assert 'recent_file_2.jpg' in filenames_after, "Recent file should be kept"
+        assert 'old_file_1.jpg' not in filenames_after, "Old entry should be removed"
+        assert 'old_file_2.jpg' not in filenames_after, "Old entry should be removed"
         
-        logger.info("✅ Old file correctly skipped (prevents re-processing)")
-        logger.info("✅ Recent file correctly queued (new file)")
-        logger.info("✅ TEST 6 PASSED: Old files protected from re-processing")
+        logger.info("✅ Old JSON entries (>30 days) correctly removed")
+        logger.info("✅ Recent JSON entries (<30 days) correctly kept")
+        logger.info("✅ JSON bounded to 30 days (scalable)")
+        logger.info("✅ TEST 6 PASSED: JSON cleanup prevents unbounded growth")
         
         handler.shutdown()
     
@@ -531,9 +518,10 @@ class TestRestartRecovery:
             logger.info("Restart recovery feature is working correctly:")
             logger.info("  ✅ Files processed during downtime are handled on restart")
             logger.info("  ✅ Already processed files are skipped")
-            logger.info("  ✅ Log cleanup prevents unbounded growth")
+            logger.info("  ✅ Log cleanup prevents unbounded growth (30-day limit)")
             logger.info("  ✅ Power failure recovery works correctly")
-            logger.info("  ✅ Old files (>30 days) never re-processed")
+            logger.info("  ✅ JSON entries >30 days old are automatically cleaned")
+            logger.info("  ✅ File modification time NOT used (supports copied files)")
             logger.info("  ✅ No files are deleted from incoming folder")
             logger.info("=" * 80)
             
